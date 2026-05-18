@@ -24,30 +24,46 @@ const NONCE_LEN: usize = 12;
 pub fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
     let entry = Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER)?;
 
+    let generate_and_save_key = |entry: &Entry| -> anyhow::Result<[u8; 32]> {
+        let key_bytes: [u8; 32] = {
+            let k = Aes256Gcm::generate_key(&mut OsRng);
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&k);
+            arr
+        };
+        let hex = hex::encode(key_bytes);
+        entry.set_password(&hex)?;
+        info!("Generated new AES-256 key — stored in macOS Keychain");
+        Ok(key_bytes)
+    };
+
     match entry.get_password() {
         Ok(hex) => {
-            // Key exists — decode from hex string
-            let bytes = hex::decode(&hex)?;
-            let mut key = [0u8; 32];
+            // Decode key from hex with self-healing fallback for corrupt encoding
+            let bytes = match hex::decode(&hex) {
+                Ok(b) => b,
+                Err(_) => {
+                    warn!("Keychain key failed to decode — regenerating key");
+                    let _ = entry.delete_password();
+                    return generate_and_save_key(&entry);
+                }
+            };
+            
+            // Self-healing fallback for invalid key length
             if bytes.len() != 32 {
-                anyhow::bail!("Keychain key wrong length — regenerating");
+                warn!("Keychain key wrong length — regenerating key");
+                let _ = entry.delete_password();
+                return generate_and_save_key(&entry);
             }
+            
+            let mut key = [0u8; 32];
             key.copy_from_slice(&bytes);
             info!("Encryption key loaded from Keychain");
             Ok(key)
         }
         Err(_) => {
-            // No key yet — generate a fresh 256-bit key
-            let key_bytes: [u8; 32] = {
-                let k = Aes256Gcm::generate_key(&mut OsRng);
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&k);
-                arr
-            };
-            let hex = hex::encode(key_bytes);
-            entry.set_password(&hex)?;
-            info!("Generated new AES-256 key — stored in macOS Keychain");
-            Ok(key_bytes)
+            // No key yet — generate a fresh key
+            generate_and_save_key(&entry)
         }
     }
 }
