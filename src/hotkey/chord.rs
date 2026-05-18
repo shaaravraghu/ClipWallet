@@ -65,12 +65,14 @@ impl ChordDetector {
             self.tab_consumed = false;
         }
 
-        // Chord broken when Cmd or Opt released — clear chord state
+        // Chord broken when Cmd or Opt released — clear chord state,
+        // but retain keys in keys_pressed_in_chord that are still being held
+        // so that they can trigger timing-safely on release.
         if key == Key::MetaLeft || key == Key::MetaRight
             || key == Key::Alt   || key == Key::AltGr
         {
             self.last_digit = None;
-            self.keys_pressed_in_chord.clear();
+            self.keys_pressed_in_chord.retain(|k| self.held.contains(k));
         }
 
         self.held.remove(&key);
@@ -200,5 +202,31 @@ fn key_to_digit(key: &Key) -> Option<usize> {
         Key::Num4 => Some(4), Key::Num5 => Some(5), Key::Num6 => Some(6),
         Key::Num7 => Some(7), Key::Num8 => Some(8), Key::Num9 => Some(9),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_timing_safe_release_triggering() {
+        let mut detector = ChordDetector::new();
+
+        // 1. User presses MetaLeft (Cmd) and Alt (Opt)
+        detector.key_down(Key::MetaLeft);
+        detector.key_down(Key::Alt);
+
+        // 2. User presses KeyC (Copy)
+        detector.key_down(Key::KeyC);
+
+        // 3. User releases Alt (Opt) slightly before KeyC
+        detector.key_up(Key::Alt);
+
+        // 4. User releases KeyC (Copy)
+        let action = detector.evaluate_release(&Key::KeyC, false);
+
+        // 5. Action should be detected as DynamicCopy!
+        assert_eq!(action, Some(HotkeyAction::DynamicCopy));
     }
 }
