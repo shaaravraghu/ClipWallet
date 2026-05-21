@@ -1,6 +1,9 @@
 //! macOS CGEventTap — intercepts and suppresses key events.
-//! Uses detector's OWN modifier state on KeyUp (not live flags)
-//! to avoid timing bugs where Opt releases before C/X/V KeyUp fires.
+//! Uses two complementary strategies to avoid the modifier-first-release race:
+//!   1. Uses detector's OWN modifier state (not live CGEventFlags) on KeyUp.
+//!   2. Also fires evaluate_release for any key still pending in
+//!      keys_pressed_in_chord even when was_active is false — covers the case
+//!      where Opt's FlagsChanged fires before C's KeyUp arrives.
 
 use crate::hotkey::{ChordDetector, HotkeyAction};
 use core_foundation::base::TCFType;
@@ -128,8 +131,11 @@ fn handle_event(
         // ── KeyUp ─────────────────────────────────────────────────────
         // IMPORTANT: Use detector's OWN modifier state, not live flags.
         // Live flags can already show Opt=false by the time C KeyUp fires.
-        // The detector tracks modifiers independently via FlagsChanged
-        // but we check clipwallet_active() BEFORE key_up() clears state.
+        // Additionally, even if was_active is false because a modifier
+        // already fired a FlagsChanged event, we must still call
+        // evaluate_release for any key that was pressed inside the chord
+        // (tracked in keys_pressed_in_chord).  This closes the race where
+        // Opt's FlagsChanged clears the detector before C's KeyUp arrives.
         CGEventType::KeyUp => {
             let keycode = event
                 .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
@@ -139,22 +145,32 @@ fn handle_event(
                 None    => return Some(event.to_owned()),
             };
 
-            // Use detector state (not live flags) — timing-safe
+            // was_active: both modifiers still held in detector at KeyUp time.
             let was_active = detector.cmd() && detector.opt();
-            debug!("KeyUp {:?}  detector_active={}", key, was_active);
+            // pending: key was pressed while chord was active (may survive
+            // modifier release via keys_pressed_in_chord).
+            let is_pending = detector.is_pending_chord_key(&key);
+            debug!("KeyUp {:?}  detector_active={}  pending={}", key, was_active, is_pending);
 
-            if was_active {
+            // Fire evaluate_release if the chord was active OR if this key
+            // was registered in the chord (handles modifier-first-release race).
+            if was_active || is_pending {
                 if let Some(action) = detector.evaluate_release(&key, mode_static) {
                     debug!("Action (release): {:?}", action);
                     let _ = tx.send(action);
+                    detector.key_up(key);
+                    return None; // suppress the raw key event
                 }
             }
 
             detector.key_up(key);
 
+            // Suppress raw event only if chord was active (not for pending-only case
+            // where modifiers were already fully released before this KeyUp).
             if was_active { return None; }
             Some(event.to_owned())
         }
+
 
         _ => Some(event.to_owned()),
     }
