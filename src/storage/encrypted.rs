@@ -39,21 +39,14 @@ pub fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
 
     match entry.get_password() {
         Ok(hex) => {
-            // Decode key from hex with self-healing fallback for corrupt encoding
-            let bytes = match hex::decode(&hex) {
-                Ok(b) => b,
-                Err(_) => {
-                    warn!("Keychain key failed to decode — regenerating key");
-                    let _ = entry.delete_password();
-                    return generate_and_save_key(&entry);
-                }
-            };
+            // Decode key from hex string
+            let bytes = hex::decode(&hex).map_err(|e| {
+                anyhow::anyhow!("Keychain key failed to decode: {}", e)
+            })?;
             
-            // Self-healing fallback for invalid key length
+            // Check key length
             if bytes.len() != 32 {
-                warn!("Keychain key wrong length — regenerating key");
-                let _ = entry.delete_password();
-                return generate_and_save_key(&entry);
+                anyhow::bail!("Keychain key wrong length: expected 32 bytes, got {}", bytes.len());
             }
             
             let mut key = [0u8; 32];
@@ -197,4 +190,43 @@ pub fn delete_from_vault(id: u64) -> anyhow::Result<()> {
         warn!("Vault entry {} not found for deletion", id);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_keychain_get_or_create_and_corruption() {
+        // Ensure starting state is clean
+        let _ = delete_key();
+
+        // 1. First call should generate a fresh key
+        let key1 = get_or_create_key().expect("Failed to create key");
+        assert_eq!(key1.len(), 32);
+
+        // 2. Subsequent call should retrieve the same key
+        let key2 = get_or_create_key().expect("Failed to retrieve key");
+        assert_eq!(key1, key2);
+
+        // 3. Set a corrupted (non-hex) key in Keychain
+        let entry = Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).unwrap();
+        entry.set_password("not-hexadecimal").unwrap();
+
+        // 4. Retrieving should fail due to decoding error
+        let err = get_or_create_key().unwrap_err();
+        assert!(err.to_string().contains("failed to decode") || err.to_string().contains("decode"));
+
+        // 5. Set a key with invalid length (e.g. 16 bytes instead of 32)
+        let short_key = [0u8; 16];
+        let short_hex = hex::encode(short_key);
+        entry.set_password(&short_hex).unwrap();
+
+        // 6. Retrieving should fail due to length mismatch
+        let err2 = get_or_create_key().unwrap_err();
+        assert!(err2.to_string().contains("wrong length") || err2.to_string().contains("length"));
+
+        // Clean up
+        delete_key().unwrap();
+    }
 }
