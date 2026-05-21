@@ -82,6 +82,16 @@ clipwallet status
 ---
 ## Installation
 
+Release assets
+
+Releases contain three top-level assets you can download from the GitHub Release page:
+
+- `install.sh` — installer script (used by the Quick Start one-liner)
+- `clipwallet-<arch>` — per-architecture standalone binary (e.g. `clipwallet-aarch64-apple-darwin`)
+- `clipwallet-<version>-<target>.zip` — full packaged zip which also contains `install.sh` and README
+
+The `install.sh` script downloads the appropriate `clipwallet-<arch>` binary for your machine and installs it to `/usr/local/bin`. The CI automatically builds and uploads both the zip and the per-arch binary so the Quick Start command should not 404.
+
 Having trouble or prefer to build it yourself? Check out our [Beginner-Friendly Manual Installation Guide](MANUAL_INSTRUCTIONS.md) for step-by-step instructions for Windows, macOS, and Linux.
 
 ---
