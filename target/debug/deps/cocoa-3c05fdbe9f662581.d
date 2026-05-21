@@ -1,0 +1,10 @@
+/Users/mayurshadhidhar/Documents/Clip-Wallet/target/debug/deps/cocoa-3c05fdbe9f662581.d: /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/lib.rs /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/appkit.rs /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/base.rs /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/foundation.rs /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/quartzcore.rs /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/macros.rs
+
+/Users/mayurshadhidhar/Documents/Clip-Wallet/target/debug/deps/libcocoa-3c05fdbe9f662581.rmeta: /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/lib.rs /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/appkit.rs /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/base.rs /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/foundation.rs /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/quartzcore.rs /Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/macros.rs
+
+/Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/lib.rs:
+/Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/appkit.rs:
+/Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/base.rs:
+/Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/foundation.rs:
+/Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/quartzcore.rs:
+/Users/mayurshadhidhar/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cocoa-0.22.0/src/macros.rs:

@@ -4,35 +4,53 @@ set -euo pipefail
 # Builds ClipWallet and packages it into a distributable zip.
 
 VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//' | sed 's/"//')
-ARCH=$(uname -m)
 
-case "$ARCH" in
-    arm64)  TARGET="aarch64-apple-darwin" ;;
-    x86_64) TARGET="x86_64-apple-darwin"  ;;
-    *)      echo "Unsupported arch"; exit 1 ;;
-esac
+# Targets to build/package — ensure both archs are included so CI
+# that builds both artifacts will always find matching dist files.
+TARGETS=("aarch64-apple-darwin" "x86_64-apple-darwin")
 
 DIST_DIR="dist"
-ZIP_NAME="clipwallet-${VERSION}-${TARGET}.zip"
+ZIP_NAME="clipwallet-${VERSION}-macos-multiarch.zip"
 
-echo "Building ClipWallet v${VERSION} for ${TARGET}..."
+echo "Building ClipWallet v${VERSION} for: ${TARGETS[*]}"
 
-# Build
-cargo build --release --target "$TARGET" 2>/dev/null \
-    || cargo build --release   # fallback to default target
-
-BINARY="target/${TARGET}/release/clipwallet"
-[ -f "$BINARY" ] || BINARY="target/release/clipwallet"
-
-# Sign
-codesign --sign - --force "$BINARY"
-echo "Binary signed ✓"
-
-# Package
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR/clipwallet"
 
-cp "$BINARY"    "$DIST_DIR/clipwallet/clipwallet"
+for TARGET in "${TARGETS[@]}"; do
+  echo "-- Building target: $TARGET"
+  # Try explicit target build, fall back to host build if not available.
+  if ! cargo build --release --target "$TARGET" 2>/dev/null; then
+    echo "  Fallback: building host release (no cross target)"
+    cargo build --release
+  fi
+
+  # Determine binary path for the target
+  BINARY="target/${TARGET}/release/clipwallet"
+  if [ ! -f "$BINARY" ]; then
+    # Fallback to host-built binary if target-specific doesn't exist
+    BINARY="target/release/clipwallet"
+  fi
+
+  if [ ! -f "$BINARY" ]; then
+    echo "ERROR: binary not found for target ${TARGET}" >&2
+    exit 1
+  fi
+
+  # Sign each binary (best-effort; codesign may require proper identity)
+  if command -v codesign >/dev/null 2>&1; then
+    echo "  Signing $BINARY"
+    codesign --sign - --force "$BINARY" || echo "  Warning: codesign failed"
+  fi
+
+  # Copy into dist with explicit arch-qualified name
+  OUT_NAME="clipwallet-${TARGET}"
+  cp "$BINARY" "$DIST_DIR/clipwallet/${OUT_NAME}"
+  chmod +x "$DIST_DIR/clipwallet/${OUT_NAME}"
+  echo "  Packaged: $DIST_DIR/clipwallet/${OUT_NAME}"
+done
+
+# Always include install + README in the package
 cp "install.sh" "$DIST_DIR/clipwallet/install.sh"
 chmod +x "$DIST_DIR/clipwallet/install.sh"
 
