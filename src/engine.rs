@@ -5,7 +5,6 @@ use crate::hotkey::{
     simulate_copy, simulate_cut, simulate_paste, simulate_paste_delayed, HotkeyAction,
 };
 use crate::notify;
-use crate::static_store::StaticSlotStore;
 use crate::storage::encrypted::{load_from_vault, save_to_vault};
 use crate::storage::ram::{next_id, RamStore};
 use arboard::{Clipboard, ImageData};
@@ -16,9 +15,8 @@ use tracing::{debug, info, warn};
 const PASTE_SETTLE_MS: u64 = 60;
 
 pub struct Engine {
-    ram:          Arc<RwLock<RamStore>>,
-    clipboard:    Clipboard,
-    static_store: StaticSlotStore,
+    ram:       Arc<RwLock<RamStore>>,
+    clipboard: Clipboard,
 }
 
 impl Engine {
@@ -26,7 +24,6 @@ impl Engine {
         Ok(Self {
             ram,
             clipboard:    Clipboard::new()?,
-            static_store: StaticSlotStore::new(),
         })
     }
 
@@ -165,10 +162,10 @@ impl Engine {
 
     fn log_static_state(&self) {
         debug!("┌─ Static Slots ({}/{} occupied) ──────────────────────",
-            self.static_store.occupied_count(), 9);
+            self.ram.read().unwrap().static_occupied_count(), 9);
         for i in 0..9 {
-            let marker = if i == self.static_store.cursor { "►" } else { " " };
-            match &self.static_store.slots[i] {
+            let marker = if i == self.ram.read().unwrap().static_cursor_slot() { "►" } else { " " };
+            match self.ram.read().unwrap().get_static(i) {
                 Some(e) => debug!("│ {} slot {} → id={} type={} | {}",
                     marker, i+1, e.id, e.data.type_label(), self.entry_preview(e)),
                 None    => debug!("│ {} slot {} → NULL", marker, i+1),
@@ -202,7 +199,7 @@ impl Engine {
             let preview = Self::short_preview(&data);
             let entry   = ClipEntry::new(next_id(), data);
             info!("[Static][COPY] slot={} ← id={} type={}", slot, entry.id, entry.data.type_label());
-            self.static_store.write(slot, entry);
+            self.ram.write().unwrap().set_static(slot, entry);
             self.log_static_state();
             notify::notify_static_copy(slot, &preview);
         }
@@ -215,14 +212,14 @@ impl Engine {
             let preview = Self::short_preview(&data);
             let entry   = ClipEntry::new(next_id(), data);
             info!("[Static][CUT] slot={} ← id={} type={}", slot, entry.id, entry.data.type_label());
-            self.static_store.write(slot, entry);
+            self.ram.write().unwrap().set_static(slot, entry);
             self.log_static_state();
             notify::notify_static_cut(slot, &preview);
         }
     }
 
     fn static_paste(&mut self, slot: usize) {
-        let data = self.static_store.read(slot).map(|e| e.data.clone());
+        let data = self.ram.read().unwrap().get_static(slot).map(|e| e.data.clone());
         match data {
             Some(d) => {
                 info!("[Static][PASTE] slot={} — syncing + scheduling", slot);
@@ -236,13 +233,13 @@ impl Engine {
 
     fn static_nav(&mut self, direction: i32) {
         let result = if direction > 0 {
-            self.static_store.cursor_next()
+            self.ram.write().unwrap().static_cursor_next()
         } else {
-            self.static_store.cursor_prev()
+            self.ram.write().unwrap().static_cursor_prev()
         };
         match result {
             Some(slot) => {
-                let data = self.static_store.cursor_entry()
+                let data = self.ram.read().unwrap().static_cursor_entry()
                     .map(|e| (e.id, e.data.type_label(), e.data.clone()));
                 if let Some((id, type_label, d)) = data {
                     let preview = Self::short_preview(&d);
@@ -257,10 +254,10 @@ impl Engine {
     }
 
     fn static_delete(&mut self) {
-        let slot     = self.static_store.cursor_slot();
-        let was_some = self.static_store.cursor_entry().is_some();
+        let slot     = self.ram.read().unwrap().static_cursor_slot();
+        let was_some = self.ram.read().unwrap().static_cursor_entry().is_some();
         if was_some {
-            self.static_store.delete_at_cursor();
+            self.ram.write().unwrap().static_delete_at_cursor();
             info!("[Static][DELETE] slot={} → NULL", slot);
             notify::notify_static_delete(slot);
         } else {
@@ -372,13 +369,13 @@ impl Engine {
     // ── Vault ─────────────────────────────────────────────────────────
 
     pub fn encrypt_slot(&mut self, slot: usize) {
-        let entry = self.static_store.read(slot).cloned();
+        let entry = self.ram.read().unwrap().get_static(slot).cloned();
         match entry {
             Some(mut e) => {
                 e.encrypted = true;
                 match save_to_vault(&e) {
                     Ok(path) => {
-                        self.static_store.clear(slot);
+                        self.ram.write().unwrap().clear_static(slot);
                         info!("[Vault] Encrypted slot {} → {:?}", slot, path);
                     }
                     Err(e) => warn!("[Vault] Encrypt failed: {}", e),
@@ -393,7 +390,7 @@ impl Engine {
             Ok(mut entry) => {
                 entry.encrypted = false;
                 info!("[Vault] Decrypted id={} → slot {}", id, slot);
-                self.static_store.write(slot, entry);
+                self.ram.write().unwrap().set_static(slot, entry);
             }
             Err(e) => warn!("[Vault] Decrypt failed: {}", e),
         }

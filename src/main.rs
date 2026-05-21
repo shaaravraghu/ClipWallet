@@ -4,7 +4,6 @@ mod daemon;
 mod engine;
 mod hotkey;
 mod notify;
-mod static_store;
 mod storage;
 
 use crate::config::{set_mode, ClipMode};
