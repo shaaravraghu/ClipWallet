@@ -80,116 +80,9 @@ clipwallet status
 **Test it:** Select some text, press `Cmd+Opt+C+1`, then paste anywhere with `Cmd+Opt+V+1` ✓
 
 ---
-
 ## Installation
 
-### Prerequisites
-
-| Requirement | Version | Purpose |
-|------------|---------|---------|
-| **macOS** | 12.0+ (Monterey or later) | Operating system |
-| **Rust** | Latest stable | Building from source |
-| **Xcode Command Line Tools** | Latest | macOS development tools |
-
-<details>
-<summary><b>📦 Installing Prerequisites</b></summary>
-
-```bash
-# Install Rust (if not already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-
-# Verify installation
-rustc --version
-cargo --version
-
-# Install Xcode Command Line Tools
-xcode-select --install
-
-# Verify installation
-xcode-select --version
-```
-</details>
-
-### Option 1: Quick Install (Recommended)
-
-**For users who just want to use ClipWallet:**
-
-```bash
-curl -fsSL https://github.com/shaaravraghu/ClipWallet/releases/latest/download/install.sh | sh
-```
-
-This will:
-- Download the pre-built binary for your architecture (Apple Silicon or Intel)
-- Install to `/usr/local/bin/clipwallet`
-- Code-sign the binary
-- Register as a login daemon (auto-starts on boot)
-
-### Option 2: Build from Source
-
-**For developers who want to modify the code:**
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/shaaravraghu/ClipWallet.git
-cd ClipWallet
-
-# 2. Build release binary
-cargo build --release
-
-# 3. Install binary + code-sign it
-sudo cp target/release/clipwallet /usr/local/bin/clipwallet
-sudo codesign --sign - --force /usr/local/bin/clipwallet
-
-# 4. Choose your mode (Static or Dynamic)
-clipwallet change mode
-
-# 5. Install as login daemon (auto-starts on boot)
-clipwallet install
-
-# 6. Verify it's running
-clipwallet status
-```
-
-### Post-Install: Grant Accessibility Permission
-
-**⚠️ CRITICAL STEP:** ClipWallet requires Accessibility access to intercept global hotkeys.
-
-#### How to Enable:
-
-1. Open **System Settings** (or System Preferences on older macOS)
-2. Navigate to **Privacy & Security** → **Accessibility**
-3. Click the **🔒 lock icon** and authenticate
-4. Click the **+** button
-5. Navigate to `/usr/local/bin/` and select **clipwallet**
-6. Ensure the checkbox next to clipwallet is **enabled**
-
-```
-System Settings → Privacy & Security → Accessibility → + → /usr/local/bin/clipwallet
-```
-
-#### Why is this needed?
-
-ClipWallet uses macOS's CGEventTap API to intercept keyboard shortcuts system-wide. Without Accessibility permission, hotkeys will **silently fail** and nothing will happen when you press them.
-
-#### How to verify it's working:
-
-```bash
-# Check daemon status
-clipwallet status
-
-# Watch live logs
-tail -f ~/.clipwallet/logs/out.log
-
-# Test a hotkey
-# Select some text and press Cmd+Opt+C+1
-# You should see activity in the logs
-```
-
-> **Troubleshooting:** If hotkeys still don't work after granting permission, restart the daemon:
-> ```bash
-> clipwallet uninstall && clipwallet install
-> ```
+Having trouble or prefer to build it yourself? Check out our [Beginner-Friendly Manual Installation Guide](MANUAL_INSTRUCTIONS.md) for step-by-step instructions for Windows, macOS, and Linux.
 
 ---
 
@@ -200,6 +93,7 @@ tail -f ~/.clipwallet/logs/out.log
 <details>
 <summary><b>👨‍💻 Developer: API Testing</b></summary>
 
+**Scenario:** Testing an API endpoint with multiple parameters
 **Scenario:** Testing an API endpoint with multiple parameters
 
 ```bash
