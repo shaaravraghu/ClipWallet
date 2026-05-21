@@ -2,7 +2,7 @@ use crate::clipboard::mime::{detect_bytes, normalise_image, DetectedType};
 use crate::clipboard::pasteboard;
 use crate::clipboard::types::{ClipData, ClipEntry};
 use crate::hotkey::{
-    simulate_copy, simulate_cut, simulate_paste, simulate_paste_delayed, HotkeyAction,
+    simulate_copy, simulate_cut, simulate_paste_delayed, HotkeyAction,
 };
 use crate::notify;
 use crate::static_store::StaticSlotStore;
@@ -126,8 +126,7 @@ impl Engine {
 
     fn write_and_paste(&mut self, data: &ClipData) {
         if self.sync_to_system_clipboard(data) {
-            std::thread::sleep(std::time::Duration::from_millis(PASTE_SETTLE_MS));
-            simulate_paste();
+            simulate_paste_delayed();
         }
     }
 
@@ -226,8 +225,7 @@ impl Engine {
         match data {
             Some(d) => {
                 info!("[Static][PASTE] slot={} — syncing + scheduling", slot);
-                self.sync_to_system_clipboard(&d);
-                simulate_paste_delayed();
+                self.write_and_paste(&d);
                 notify::notify_static_paste(slot);
             }
             None => warn!("[Static][PASTE] slot={} is NULL", slot),
@@ -319,8 +317,7 @@ impl Engine {
         match data {
             Some((id, d, cursor, total)) => {
                 info!("[Dynamic][PASTE] ring[{}] id={} — syncing + scheduling", cursor, id);
-                self.sync_to_system_clipboard(&d);
-                simulate_paste_delayed();
+                self.write_and_paste(&d);
                 notify::notify_dynamic_paste(cursor + 1, total);
             }
             None => warn!("[Dynamic][PASTE] Ring is empty"),
