@@ -14,6 +14,53 @@ use std::sync::{Arc, RwLock};
 use tracing::{debug, info, warn};
 
 const PASTE_SETTLE_MS: u64 = 60;
+const PREVIEW_GRAPHEME_LIMIT: usize = 40;
+
+fn is_preview_grapheme_extension(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{0300}'..='\u{036F}'
+            | '\u{1AB0}'..='\u{1AFF}'
+            | '\u{1DC0}'..='\u{1DFF}'
+            | '\u{20D0}'..='\u{20FF}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{1F3FB}'..='\u{1F3FF}'
+            | '\u{200D}'
+    )
+}
+
+fn preview_prefix(text: &str, limit: usize) -> (&str, bool) {
+    let mut clusters = 0;
+    let mut previous_was_joiner = false;
+
+    for (index, ch) in text.char_indices() {
+        let starts_cluster =
+            clusters == 0 || (!previous_was_joiner && !is_preview_grapheme_extension(ch));
+
+        if starts_cluster {
+            if clusters == limit {
+                return (&text[..index], true);
+            }
+
+            clusters += 1;
+        }
+
+        previous_was_joiner = ch == '\u{200D}';
+    }
+
+    (text, false)
+}
+
+fn preview_text(text: &str, newline_replacement: &str) -> String {
+    let (preview, truncated) = preview_prefix(text, PREVIEW_GRAPHEME_LIMIT);
+    let preview = preview.replace('\n', newline_replacement);
+
+    if truncated {
+        format!("{}…", preview)
+    } else {
+        preview
+    }
+}
 
 pub struct Engine {
     ram:          Arc<RwLock<RamStore>>,
@@ -135,11 +182,7 @@ impl Engine {
 
     fn short_preview(data: &ClipData) -> String {
         match data {
-            ClipData::PlainText(t) => {
-                let s: String = t.chars().take(40).collect();
-                let s = s.replace('\n', " ");
-                if t.len() > 40 { format!("{}…", s) } else { s }
-            }
+            ClipData::PlainText(t) => preview_text(t, " "),
             ClipData::Image { width, height, .. } => format!("Image {}×{}", width, height),
             ClipData::FilePath(p) => format!("{} file(s)", p.len()),
             ClipData::RichText(b) => format!("RTF {} bytes", b.len()),
@@ -151,11 +194,7 @@ impl Engine {
 
     fn entry_preview(&self, entry: &ClipEntry) -> String {
         match &entry.data {
-            ClipData::PlainText(t) => {
-                let s: String = t.chars().take(40).collect();
-                let s = s.replace('\n', "↵");
-                if t.len() > 40 { format!("\"{}…\"", s) } else { format!("\"{}\"", s) }
-            }
+            ClipData::PlainText(t) => format!("\"{}\"", preview_text(t, "↵")),
             ClipData::Image { width, height, .. } => format!("[Image {}x{}]", width, height),
             ClipData::FilePath(p)  => format!("[{} file(s)]", p.len()),
             ClipData::RichText(b)  => format!("[RTF {} bytes]", b.len()),
@@ -397,5 +436,42 @@ impl Engine {
             }
             Err(e) => warn!("[Vault] Decrypt failed: {}", e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_preview_does_not_truncate_exact_multibyte_limit() {
+        let text = "😀".repeat(40);
+
+        assert_eq!(
+            Engine::short_preview(&ClipData::PlainText(text.clone())),
+            text
+        );
+    }
+
+    #[test]
+    fn short_preview_does_not_split_grapheme_clusters() {
+        let family = "👨‍👩‍👧‍👦";
+        let text = family.repeat(40);
+
+        assert_eq!(
+            Engine::short_preview(&ClipData::PlainText(text.clone())),
+            text
+        );
+    }
+
+    #[test]
+    fn short_preview_truncates_after_complete_grapheme_cluster() {
+        let family = "👨‍👩‍👧‍👦";
+        let text = family.repeat(41);
+
+        assert_eq!(
+            Engine::short_preview(&ClipData::PlainText(text)),
+            format!("{}…", family.repeat(40))
+        );
     }
 }
