@@ -197,6 +197,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "Non-hermetic test: accesses real system Keychain. Run manually with `cargo test -- --ignored`"]
     fn test_keychain_get_or_create_and_corruption() {
         // Ensure starting state is clean
         let _ = delete_key();
