@@ -161,14 +161,15 @@ impl Engine {
     }
 
     fn log_static_state(&self) {
+        let ram = self.ram.read().unwrap();
         debug!("┌─ Static Slots ({}/{} occupied) ──────────────────────",
-            self.ram.read().unwrap().static_occupied_count(), 9);
-        for i in 0..9 {
-            let marker = if i == self.ram.read().unwrap().static_cursor_slot() { "►" } else { " " };
-            match self.ram.read().unwrap().get_static(i) {
+            ram.static_occupied_count(), 9);
+        for i in 1..=9usize {
+            let marker = if i == ram.static_cursor_slot() { "►" } else { " " };
+            match ram.get_static(i) {
                 Some(e) => debug!("│ {} slot {} → id={} type={} | {}",
-                    marker, i+1, e.id, e.data.type_label(), self.entry_preview(e)),
-                None    => debug!("│ {} slot {} → NULL", marker, i+1),
+                    marker, i, e.id, e.data.type_label(), self.entry_preview(e)),
+                None    => debug!("│ {} slot {} → NULL", marker, i),
             }
         }
         debug!("└──────────────────────────────────────────────────────");
