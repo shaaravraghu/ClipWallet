@@ -7,7 +7,7 @@ use crate::hotkey::{
 use crate::notify;
 use crate::static_store::StaticSlotStore;
 use crate::storage::encrypted::{load_from_vault, save_to_vault};
-use crate::storage::ram::{next_id, RamStore};
+use crate::storage::ram::{next_id, PushResult, RamStore};
 use arboard::{Clipboard, ImageData};
 use std::borrow::Cow;
 use std::sync::{Arc, RwLock};
@@ -39,12 +39,14 @@ impl Engine {
             HotkeyAction::StaticNavigateNext  => self.static_nav(1),
             HotkeyAction::StaticNavigatePrev  => self.static_nav(-1),
             HotkeyAction::StaticDeleteCurrent => self.static_delete(),
+            HotkeyAction::StaticTogglePin(s)  => self.static_toggle_pin(s),
             HotkeyAction::DynamicCopy         => self.dynamic_copy(),
             HotkeyAction::DynamicCut          => self.dynamic_cut(),
             HotkeyAction::DynamicPaste        => self.dynamic_paste(),
             HotkeyAction::DynamicNavigateNext => self.dynamic_nav(1),
             HotkeyAction::DynamicNavigatePrev => self.dynamic_nav(-1),
             HotkeyAction::DynamicDeleteCurrent=> self.dynamic_delete(),
+            HotkeyAction::DynamicTogglePin    => self.dynamic_toggle_pin(),
             HotkeyAction::CursorReset         => self.cursor_reset(),
         }
     }
@@ -196,6 +198,12 @@ impl Engine {
     // ════════════════════════════════════════════════════════════════
 
     fn static_copy(&mut self, slot: usize) {
+        // Refuse if slot is pinned
+        if self.static_store.read(slot).map(|e| e.pinned).unwrap_or(false) {
+            warn!("[Static][COPY] slot={} is pinned — copy blocked", slot);
+            notify::notify_static_pin_blocked(slot);
+            return;
+        }
         info!("[Static][COPY] slot={} — injecting Cmd+C", slot);
         simulate_copy();
         if let Some(data) = self.read_clipboard() {
@@ -209,6 +217,12 @@ impl Engine {
     }
 
     fn static_cut(&mut self, slot: usize) {
+        // Refuse if slot is pinned
+        if self.static_store.read(slot).map(|e| e.pinned).unwrap_or(false) {
+            warn!("[Static][CUT] slot={} is pinned — cut blocked", slot);
+            notify::notify_static_pin_blocked(slot);
+            return;
+        }
         info!("[Static][CUT] slot={} — injecting Cmd+X", slot);
         simulate_cut();
         if let Some(data) = self.read_clipboard() {
@@ -281,8 +295,14 @@ impl Engine {
             let entry   = ClipEntry::new(next_id(), data);
             info!("[Dynamic][COPY] id={} type={} size={}B → ring[0]",
                 entry.id, entry.data.type_label(), entry.data.size_bytes());
-            let evicted = self.ram.write().unwrap().push_dynamic(entry.clone());
-            if let Some(old) = evicted { info!("[Dynamic][EVICT] Dropped: {}", old); }
+            match self.ram.write().unwrap().push_dynamic(entry.clone()) {
+                PushResult::Evicted(old) => info!("[Dynamic][EVICT] Dropped: {}", old),
+                PushResult::AllPinned    => {
+                    warn!("[Dynamic][COPY] Ring full and all entries pinned — push blocked");
+                    return;
+                }
+                PushResult::Pushed => {}
+            }
             self.sync_to_system_clipboard(&entry.data);
             let (pos, total) = {
                 let ram = self.ram.read().unwrap();
@@ -300,7 +320,14 @@ impl Engine {
             let preview = Self::short_preview(&data);
             let entry   = ClipEntry::new(next_id(), data);
             info!("[Dynamic][CUT] id={} type={} → ring[0]", entry.id, entry.data.type_label());
-            self.ram.write().unwrap().push_dynamic(entry.clone());
+            match self.ram.write().unwrap().push_dynamic(entry.clone()) {
+                PushResult::Evicted(old) => info!("[Dynamic][EVICT] Dropped: {}", old),
+                PushResult::AllPinned    => {
+                    warn!("[Dynamic][CUT] Ring full and all entries pinned — push blocked");
+                    return;
+                }
+                PushResult::Pushed => {}
+            }
             self.sync_to_system_clipboard(&entry.data);
             let (pos, total) = {
                 let ram = self.ram.read().unwrap();
@@ -356,6 +383,36 @@ impl Engine {
         if let Some(d) = next { self.sync_to_system_clipboard(&d); }
         self.log_ring_state();
         notify::notify_dynamic_delete(cursor);
+    }
+
+    fn dynamic_toggle_pin(&mut self) {
+        let result = {
+            let mut ram = self.ram.write().unwrap();
+            let cursor  = ram.dynamic_cursor;
+            ram.toggle_pin_at_cursor().map(|pinned| (cursor, pinned))
+        };
+        match result {
+            Some((cursor, true))  => {
+                info!("[Dynamic][PIN] ring[{}] pinned", cursor);
+                notify::notify_dynamic_pin(cursor, true);
+            }
+            Some((cursor, false)) => {
+                info!("[Dynamic][PIN] ring[{}] unpinned", cursor);
+                notify::notify_dynamic_pin(cursor, false);
+            }
+            None => warn!("[Dynamic][PIN] Ring is empty"),
+        }
+    }
+
+    fn static_toggle_pin(&mut self, slot: usize) {
+        if let Some(entry) = self.static_store.slots.get_mut(slot - 1).and_then(|s| s.as_mut()) {
+            entry.pinned = !entry.pinned;
+            let pinned = entry.pinned;
+            info!("[Static][PIN] slot={} pinned={}", slot, pinned);
+            notify::notify_static_pin(slot, pinned);
+        } else {
+            warn!("[Static][PIN] slot={} is NULL", slot);
+        }
     }
 
     fn cursor_reset(&mut self) {
