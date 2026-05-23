@@ -2,7 +2,7 @@ use crate::clipboard::types::{ClipEntry, EntryId};
 use std::collections::VecDeque;
 use std::time::Instant;
 
-pub const MAX_DYNAMIC:  usize = 50;
+
 pub const STATIC_SLOTS: usize = 9;
 
 /// Cursor timeout in seconds — resets to most recent after this idle period
@@ -28,19 +28,18 @@ pub struct RamStore {
 
     pub dirty: bool,
 }
-
 impl RamStore {
-    pub fn new() -> Self {
+    pub fn new(capacity: usize) -> Self {
         Self {
-            static_slots:  std::array::from_fn(|_| None),
+            static_slots: std::array::from_fn(|_| None),
             static_cursor: 0,
-            dynamic_ring:  VecDeque::with_capacity(MAX_DYNAMIC),
+            dynamic_ring: VecDeque::with_capacity(capacity),
             dynamic_cursor: 0,
             last_nav_time: Instant::now(),
             dirty: false,
         }
     }
-
+}
     // ── Static slots ──────────────────────────────────────────────────
 
     pub fn set_static(&mut self, slot: usize, entry: ClipEntry) {

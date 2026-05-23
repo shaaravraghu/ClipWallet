@@ -308,7 +308,13 @@ async fn run_service() -> anyhow::Result<()> {
     }
 
     // ── Shared RAM store ──────────────────────────────────────────────────────
-    let ram = Arc::new(RwLock::new(RamStore::new()));
+  let cfg = config::load();
+
+let ram = Arc::new(
+    RwLock::new(
+        RamStore::new(cfg.ring_capacity)
+    )
+);
     {
         let mut w = ram.write().unwrap();
         disk::cleanup_tmp_files();
