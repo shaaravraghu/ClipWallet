@@ -38,7 +38,7 @@ This project is part of **GirlScript Summer of Code (GSSoC) 2025**. We appreciat
 | 1 | Rahul Singh | [@rahulsingh289](https://github.com/rahulsingh289) | - | #1, #2 | - | 📖 🔧 | Improved README with beginner-friendly documentation, added .gitignore for build artifacts | May 2026 |
 | 2 | Riddhima | [@riddhima25bet10005-a11y](https://github.com/riddhima25bet10005-a11y) | #12 | #15 | - | 🐛 🧪 | Fixed hotkey timing race: modifier-first-release no longer drops C/V/X in dynamic and static mode; added unit test coverage for all affected paths | May 2026 |
 
-
+| 3 | Chhavi Mishra | [@vibeetroot](https://github.com/vibeetroot) | #8 | - | - | 💻 | Refactored engine.rs to remove StaticSlotStore and route static slot operations through RamStore | May 2026 |
 ---
 
 ## Contribution Type Legend 
