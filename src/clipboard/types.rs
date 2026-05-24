@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 pub type EntryId = u64;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClipData {
     PlainText(String),
     RichText(Vec<u8>),
