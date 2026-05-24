@@ -116,7 +116,7 @@ impl RamStore {
     /// Push to front. Returns the evicted entry label if ring was full.
     pub fn push_dynamic(&mut self, entry: ClipEntry) -> Option<String> {
         let mut evicted = None;
-        if self.dynamic_ring.len() >= MAX_DYNAMIC {
+        if self.dynamic_ring.len() >= self.dynamic_ring.capacity() {
             if let Some(old) = self.dynamic_ring.pop_back() {
                 evicted = Some(format!(
                     "id={} ({})",
