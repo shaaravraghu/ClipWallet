@@ -22,6 +22,7 @@ pub struct RamStore {
     pub static_cursor:  usize,
     pub dynamic_ring:   VecDeque<ClipEntry>,
     pub dynamic_cursor: usize,
+    pub capacity:       usize,
 
     /// Tracks when the user last navigated — used by timeout task
     pub last_nav_time:  Instant,
@@ -35,11 +36,11 @@ impl RamStore {
             static_cursor: 0,
             dynamic_ring: VecDeque::with_capacity(capacity),
             dynamic_cursor: 0,
+            capacity,
             last_nav_time: Instant::now(),
             dirty: false,
         }
     }
-}
     // ── Static slots ──────────────────────────────────────────────────
 
     pub fn set_static(&mut self, slot: usize, entry: ClipEntry) {
@@ -115,8 +116,12 @@ impl RamStore {
 
     /// Push to front. Returns the evicted entry label if ring was full.
     pub fn push_dynamic(&mut self, entry: ClipEntry) -> Option<String> {
+        if self.dynamic_ring.iter().any(|e| clip_data_eq(&e.data, &entry.data)) {
+            return None;
+        }
+
         let mut evicted = None;
-        if self.dynamic_ring.len() >= self.dynamic_ring.capacity() {
+        if self.dynamic_ring.len() >= self.capacity {
             if let Some(old) = self.dynamic_ring.pop_back() {
                 evicted = Some(format!(
                     "id={} ({})",
@@ -181,4 +186,16 @@ impl RamStore {
 
     pub fn clear_dirty(&mut self) { self.dirty = false; }
     pub fn is_dirty(&self)        -> bool { self.dirty }
+}
+
+fn clip_data_eq(a: &crate::clipboard::types::ClipData, b: &crate::clipboard::types::ClipData) -> bool {
+    use crate::clipboard::types::ClipData::*;
+    match (a, b) {
+        (PlainText(s1), PlainText(s2)) => s1 == s2,
+        (RichText(b1), RichText(b2)) => b1 == b2,
+        (Image { bytes: by1, .. }, Image { bytes: by2, .. }) => by1 == by2,
+        (FilePath(p1), FilePath(p2)) => p1 == p2,
+        (Binary(b1), Binary(b2)) => b1 == b2,
+        _ => false,
+    }
 }

@@ -47,7 +47,7 @@ enum Commands {
     /// Start the ClipWallet background service (foreground)
     Run {
         /// Override the dynamic-ring capacity (entries kept in RAM).
-        /// Defaults to a value derived from available system RAM.
+        /// Defaults to the configured ring capacity (50).
         #[arg(long, value_name = "ENTRIES")]
         ring_capacity: Option<usize>,
     },
@@ -300,7 +300,9 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
     let mode_static = cfg.mode == ClipMode::Static;
 
     // ── Determine ring capacity ───────────────────────────────────────────────
-    let capacity = ring_capacity_override.unwrap_or_else(system_ring_capacity);
+    let capacity = ring_capacity_override
+        .unwrap_or(cfg.ring_capacity)
+        .clamp(10, 500);
     info!(
         "ClipWallet v0.1.0 starting in {} mode | ring capacity = {}...",
         if mode_static { "STATIC" } else { "DYNAMIC" },
@@ -398,43 +400,7 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
     Ok(())
 }
 
-// ── System-derived ring capacity ─────────────────────────────────────────────
 
-/// Returns a ring capacity derived from total system RAM.
-/// Allocates roughly 1 entry per 32 MB of RAM, clamped to [10, 500].
-/// Falls back to 50 if the OS does not expose memory info.
-fn system_ring_capacity() -> usize {
-    let fallback: usize = 50;
-
-    // Use sysconf(_SC_PHYS_PAGES) + sysconf(_SC_PAGE_SIZE) on Unix.
-    // On Windows or any unsupported target we just use the fallback.
-    #[cfg(unix)]
-    {
-        let pages     = unsafe { libc_page_count() };
-        let page_size = unsafe { libc_page_size() };
-        if pages > 0 && page_size > 0 {
-            let ram_mb   = (pages as u64 * page_size as u64) / (1024 * 1024);
-            let capacity = (ram_mb / 32) as usize;
-            return capacity.clamp(10, 500);
-        }
-    }
-
-    fallback
-}
-
-#[cfg(unix)]
-unsafe fn libc_page_count() -> i64 {
-    // _SC_PHYS_PAGES = 85 on Linux/macOS
-    extern "C" { fn sysconf(name: i32) -> i64; }
-    sysconf(85)
-}
-
-#[cfg(unix)]
-unsafe fn libc_page_size() -> i64 {
-    // _SC_PAGE_SIZE = 29 on Linux; _SC_PAGESIZE = 8 on macOS — both work via 29 on Darwin too
-    extern "C" { fn sysconf(name: i32) -> i64; }
-    sysconf(29)
-}
 
 // ── Vault Key Rotation ────────────────────────────────────────────────────────
 
