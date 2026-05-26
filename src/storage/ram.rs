@@ -17,6 +17,16 @@ pub fn next_id() -> EntryId {
     }
 }
 
+/// Result of a push_dynamic call.
+pub enum PushResult {
+    /// Entry pushed, no eviction needed (ring was not full)
+    Pushed,
+    /// Entry pushed, this label was evicted to make room
+    Evicted(String),
+    /// Push blocked — all entries are pinned
+    AllPinned,
+}
+
 pub struct RamStore {
     pub static_slots:   [Option<ClipEntry>; STATIC_SLOTS],
     pub static_cursor:  usize,
@@ -114,22 +124,38 @@ impl RamStore {
 
     // ── Dynamic ───────────────────────────────────────────────────────
 
-    /// Push to front. Returns the evicted entry label if ring was full.
-    pub fn push_dynamic(&mut self, entry: ClipEntry) -> Option<String> {
-        let mut evicted = None;
+    /// Push to front. Evicts the oldest unpinned entry if ring is full.
+    /// If all entries are pinned, the push is blocked and returns AllPinned.
+    pub fn push_dynamic(&mut self, entry: ClipEntry) -> PushResult {
         if self.dynamic_ring.len() >= MAX_DYNAMIC {
-            if let Some(old) = self.dynamic_ring.pop_back() {
-                evicted = Some(format!(
-                    "id={} ({})",
-                    old.id,
-                    old.data.type_label()
-                ));
+            // Find the oldest (last) unpinned entry
+            if let Some(idx) = self.dynamic_ring.iter().rposition(|e| !e.pinned) {
+                let old = self.dynamic_ring.remove(idx).unwrap();
+                let label = format!("id={} ({})", old.id, old.data.type_label());
+                self.dynamic_ring.push_front(entry);
+                self.dynamic_cursor = 0;
+                self.dirty = true;
+                return PushResult::Evicted(label);
+            } else {
+                // All entries pinned — refuse the push
+                return PushResult::AllPinned;
             }
         }
         self.dynamic_ring.push_front(entry);
         self.dynamic_cursor = 0;
         self.dirty = true;
-        evicted
+        PushResult::Pushed
+    }
+
+    /// Toggle pinned state on the entry at the current cursor position.
+    pub fn toggle_pin_at_cursor(&mut self) -> Option<bool> {
+        if let Some(entry) = self.dynamic_ring.get_mut(self.dynamic_cursor) {
+            entry.pinned = !entry.pinned;
+            self.dirty = true;
+            Some(entry.pinned)
+        } else {
+            None
+        }
     }
 
     pub fn current_dynamic(&self) -> Option<&ClipEntry> {

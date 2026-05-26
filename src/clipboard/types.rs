@@ -46,6 +46,8 @@ pub struct ClipEntry {
     pub data:      ClipData,
     pub encrypted: bool,
     pub label:     Option<String>,
+    #[serde(default)]
+    pub pinned:    bool,
 }
 
 impl ClipEntry {
@@ -56,6 +58,7 @@ impl ClipEntry {
             data,
             encrypted: false,
             label: None,
+            pinned: false,
         }
     }
 }

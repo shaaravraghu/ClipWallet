@@ -76,3 +76,19 @@ pub fn notify_memory_cleared() {
 pub fn notify_encryption_removed() {
     notify("ClipWallet", "Encryption removed", "Vault data deleted, Keychain key removed");
 }
+
+// ── Pin ───────────────────────────────────────────────────────────────────────
+
+pub fn notify_dynamic_pin(pos: usize, pinned: bool) {
+    let state = if pinned { "Pinned" } else { "Unpinned" };
+    notify("ClipWallet", &format!("{} ring[{}]", state, pos), "");
+}
+
+pub fn notify_static_pin(slot: usize, pinned: bool) {
+    let state = if pinned { "Pinned" } else { "Unpinned" };
+    notify("ClipWallet", &format!("{} Slot {}", state, slot), "");
+}
+
+pub fn notify_static_pin_blocked(slot: usize) {
+    notify("ClipWallet", &format!("Slot {} is pinned", slot), "Unpin first to overwrite");
+}

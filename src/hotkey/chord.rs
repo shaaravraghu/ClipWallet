@@ -10,6 +10,7 @@ pub enum HotkeyAction {
     StaticNavigateNext,
     StaticNavigatePrev,
     StaticDeleteCurrent,
+    StaticTogglePin(usize),
 
     // Dynamic mode — recency ring
     DynamicCopy,
@@ -18,6 +19,7 @@ pub enum HotkeyAction {
     DynamicNavigateNext,
     DynamicNavigatePrev,
     DynamicDeleteCurrent,
+    DynamicTogglePin,
 
     // Internal
     CursorReset,
@@ -193,6 +195,14 @@ impl ChordDetector {
                     self.last_digit.map(HotkeyAction::StaticPaste)
                 } else {
                     Some(HotkeyAction::DynamicPaste)
+                }
+            }
+
+            Key::KeyP => {
+                if mode_static {
+                    self.last_digit.map(HotkeyAction::StaticTogglePin)
+                } else {
+                    Some(HotkeyAction::DynamicTogglePin)
                 }
             }
 
