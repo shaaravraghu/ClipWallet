@@ -31,15 +31,19 @@ impl Default for Config {
     }
 }
 
-fn config_path() -> PathBuf {
-    home_dir()
-        .expect("No home dir")
-        .join(".clipwallet")
-        .join("config.toml")
+fn config_path() -> anyhow::Result<PathBuf> {
+    let home = home_dir().ok_or_else(|| anyhow::anyhow!("No home dir found"))?;
+    Ok(home.join(".clipwallet").join("config.toml"))
 }
 
 pub fn load() -> Config {
-    let path = config_path();
+    let path = match config_path() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("Cannot determine config path: {}", e);
+            return Config::default();
+        }
+    };
     if !path.exists() {
         let cfg = Config::default();
         let _ = save(&cfg);
@@ -52,8 +56,10 @@ pub fn load() -> Config {
 }
 
 pub fn save(cfg: &Config) -> anyhow::Result<()> {
-    let path = config_path();
-    fs::create_dir_all(path.parent().unwrap())?;
+    let path = config_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let s = toml::to_string(cfg)?;
     fs::write(&path, s)?;
     Ok(())

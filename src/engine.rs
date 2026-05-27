@@ -160,7 +160,7 @@ impl Engine {
     }
 
     fn log_static_state(&self) {
-        let ram = self.ram.read().unwrap();
+        let ram = self.ram.read().unwrap_or_else(|e| e.into_inner());
         debug!("┌─ Static Slots ({}/{} occupied) ──────────────────────",
             ram.static_occupied_count(), 9);
         for i in 1..=9usize {
@@ -175,7 +175,7 @@ impl Engine {
     }
 
     fn log_ring_state(&self) {
-        let ram = self.ram.read().unwrap();
+        let ram = self.ram.read().unwrap_or_else(|e| e.into_inner());
         let len = ram.ring_len();
         let cur = ram.dynamic_cursor;
         debug!("┌─ Ring State ({} entries) ─────────────────────────", len);
@@ -199,7 +199,7 @@ impl Engine {
             let preview = Self::short_preview(&data);
             let entry   = ClipEntry::new(next_id(), data);
             info!("[Static][COPY] slot={} ← id={} type={}", slot, entry.id, entry.data.type_label());
-            self.ram.write().unwrap().set_static(slot, entry);
+            self.ram.write().unwrap_or_else(|e| e.into_inner()).set_static(slot, entry);
             self.log_static_state();
             notify::notify_static_copy(slot, &preview);
         }
@@ -212,14 +212,14 @@ impl Engine {
             let preview = Self::short_preview(&data);
             let entry   = ClipEntry::new(next_id(), data);
             info!("[Static][CUT] slot={} ← id={} type={}", slot, entry.id, entry.data.type_label());
-            self.ram.write().unwrap().set_static(slot, entry);
+            self.ram.write().unwrap_or_else(|e| e.into_inner()).set_static(slot, entry);
             self.log_static_state();
             notify::notify_static_cut(slot, &preview);
         }
     }
 
     fn static_paste(&mut self, slot: usize) {
-        let data = self.ram.read().unwrap().get_static(slot).map(|e| e.data.clone());
+        let data = self.ram.read().unwrap_or_else(|e| e.into_inner()).get_static(slot).map(|e| e.data.clone());
         match data {
             Some(d) => {
                 info!("[Static][PASTE] slot={} — syncing + scheduling", slot);
@@ -232,13 +232,13 @@ impl Engine {
 
     fn static_nav(&mut self, direction: i32) {
         let result = if direction > 0 {
-            self.ram.write().unwrap().static_cursor_next()
+            self.ram.write().unwrap_or_else(|e| e.into_inner()).static_cursor_next()
         } else {
-            self.ram.write().unwrap().static_cursor_prev()
+            self.ram.write().unwrap_or_else(|e| e.into_inner()).static_cursor_prev()
         };
         match result {
             Some(slot) => {
-                let data = self.ram.read().unwrap().static_cursor_entry()
+                let data = self.ram.read().unwrap_or_else(|e| e.into_inner()).static_cursor_entry()
                     .map(|e| (e.id, e.data.type_label(), e.data.clone()));
                 if let Some((id, type_label, d)) = data {
                     let preview = Self::short_preview(&d);
@@ -253,10 +253,10 @@ impl Engine {
     }
 
     fn static_delete(&mut self) {
-        let slot     = self.ram.read().unwrap().static_cursor_slot();
-        let was_some = self.ram.read().unwrap().static_cursor_entry().is_some();
+        let slot     = self.ram.read().unwrap_or_else(|e| e.into_inner()).static_cursor_slot();
+        let was_some = self.ram.read().unwrap_or_else(|e| e.into_inner()).static_cursor_entry().is_some();
         if was_some {
-            self.ram.write().unwrap().static_delete_at_cursor();
+            self.ram.write().unwrap_or_else(|e| e.into_inner()).static_delete_at_cursor();
             info!("[Static][DELETE] slot={} → NULL", slot);
             notify::notify_static_delete(slot);
         } else {
@@ -277,11 +277,11 @@ impl Engine {
             let entry   = ClipEntry::new(next_id(), data);
             info!("[Dynamic][COPY] id={} type={} size={}B → ring[0]",
                 entry.id, entry.data.type_label(), entry.data.size_bytes());
-            let evicted = self.ram.write().unwrap().push_dynamic(entry.clone());
+            let evicted = self.ram.write().unwrap_or_else(|e| e.into_inner()).push_dynamic(entry.clone());
             if let Some(old) = evicted { info!("[Dynamic][EVICT] Dropped: {}", old); }
             self.sync_to_system_clipboard(&entry.data);
             let (pos, total) = {
-                let ram = self.ram.read().unwrap();
+                let ram = self.ram.read().unwrap_or_else(|e| e.into_inner());
                 (ram.dynamic_cursor + 1, ram.ring_len())
             };
             self.log_ring_state();
@@ -296,10 +296,10 @@ impl Engine {
             let preview = Self::short_preview(&data);
             let entry   = ClipEntry::new(next_id(), data);
             info!("[Dynamic][CUT] id={} type={} → ring[0]", entry.id, entry.data.type_label());
-            self.ram.write().unwrap().push_dynamic(entry.clone());
+            self.ram.write().unwrap_or_else(|e| e.into_inner()).push_dynamic(entry.clone());
             self.sync_to_system_clipboard(&entry.data);
             let (pos, total) = {
-                let ram = self.ram.read().unwrap();
+                let ram = self.ram.read().unwrap_or_else(|e| e.into_inner());
                 (ram.dynamic_cursor + 1, ram.ring_len())
             };
             self.log_ring_state();
@@ -309,7 +309,7 @@ impl Engine {
 
     fn dynamic_paste(&mut self) {
         let data = {
-            let ram = self.ram.read().unwrap();
+            let ram = self.ram.read().unwrap_or_else(|e| e.into_inner());
             ram.current_dynamic().map(|e| (e.id, e.data.clone(), ram.dynamic_cursor, ram.ring_len()))
         };
         match data {
@@ -324,11 +324,11 @@ impl Engine {
 
     fn dynamic_nav(&mut self, direction: i32) {
         {
-            let mut ram = self.ram.write().unwrap();
+            let mut ram = self.ram.write().unwrap_or_else(|e| e.into_inner());
             if direction > 0 { ram.cursor_next(); } else { ram.cursor_prev(); }
         }
         let data = {
-            let ram = self.ram.read().unwrap();
+            let ram = self.ram.read().unwrap_or_else(|e| e.into_inner());
             ram.current_dynamic().map(|e| {
                 (e.id, e.data.type_label(), ram.dynamic_cursor, ram.ring_len(), e.data.clone())
             })
@@ -343,22 +343,22 @@ impl Engine {
     }
 
     fn dynamic_delete(&mut self) {
-        let cursor = self.ram.read().unwrap().dynamic_cursor;
-        let id     = self.ram.read().unwrap().current_dynamic().map(|e| e.id);
-        self.ram.write().unwrap().delete_at_cursor();
+        let cursor = self.ram.read().unwrap_or_else(|e| e.into_inner()).dynamic_cursor;
+        let id     = self.ram.read().unwrap_or_else(|e| e.into_inner()).current_dynamic().map(|e| e.id);
+        self.ram.write().unwrap_or_else(|e| e.into_inner()).delete_at_cursor();
         info!("[Dynamic][DELETE] Removed ring[{}] id={:?}", cursor, id);
-        let next = self.ram.read().unwrap().current_dynamic().map(|e| e.data.clone());
+        let next = self.ram.read().unwrap_or_else(|e| e.into_inner()).current_dynamic().map(|e| e.data.clone());
         if let Some(d) = next { self.sync_to_system_clipboard(&d); }
         self.log_ring_state();
         notify::notify_dynamic_delete(cursor);
     }
 
     fn cursor_reset(&mut self) {
-        let was_at = self.ram.read().unwrap().dynamic_cursor;
+        let was_at = self.ram.read().unwrap_or_else(|e| e.into_inner()).dynamic_cursor;
         if was_at != 0 {
-            self.ram.write().unwrap().reset_cursor();
+            self.ram.write().unwrap_or_else(|e| e.into_inner()).reset_cursor();
             info!("[Dynamic][TIMEOUT] Cursor reset [{}]→[0]", was_at + 1);
-            let d = self.ram.read().unwrap().current_dynamic().map(|e| e.data.clone());
+            let d = self.ram.read().unwrap_or_else(|e| e.into_inner()).current_dynamic().map(|e| e.data.clone());
             if let Some(data) = d { self.sync_to_system_clipboard(&data); }
             self.log_ring_state();
         }
@@ -367,13 +367,13 @@ impl Engine {
     // ── Vault ─────────────────────────────────────────────────────────
 
     pub fn encrypt_slot(&mut self, slot: usize) {
-        let entry = self.ram.read().unwrap().get_static(slot).cloned();
+        let entry = self.ram.read().unwrap_or_else(|e| e.into_inner()).get_static(slot).cloned();
         match entry {
             Some(mut e) => {
                 e.encrypted = true;
                 match save_to_vault(&e) {
                     Ok(path) => {
-                        self.ram.write().unwrap().clear_static(slot);
+                        self.ram.write().unwrap_or_else(|e| e.into_inner()).clear_static(slot);
                         info!("[Vault] Encrypted slot {} → {:?}", slot, path);
                     }
                     Err(e) => warn!("[Vault] Encrypt failed: {}", e),
@@ -388,7 +388,7 @@ impl Engine {
             Ok(mut entry) => {
                 entry.encrypted = false;
                 info!("[Vault] Decrypted id={} → slot {}", id, slot);
-                self.ram.write().unwrap().set_static(slot, entry);
+                self.ram.write().unwrap_or_else(|e| e.into_inner()).set_static(slot, entry);
             }
             Err(e) => warn!("[Vault] Decrypt failed: {}", e),
         }

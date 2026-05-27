@@ -73,11 +73,9 @@ pub fn delete_key() -> anyhow::Result<()> {
 
 // ── Vault Directory ───────────────────────────────────────────────────────────
 
-pub fn vault_dir() -> PathBuf {
-    home_dir()
-        .expect("No home dir")
-        .join(".clipwallet")
-        .join("vault")
+pub fn vault_dir() -> anyhow::Result<PathBuf> {
+    let home = home_dir().ok_or_else(|| anyhow::anyhow!("No home dir found"))?;
+    Ok(home.join(".clipwallet").join("vault"))
 }
 
 // ── Encrypt / Decrypt ─────────────────────────────────────────────────────────
@@ -131,7 +129,7 @@ pub fn decrypt_entry(bytes: &[u8]) -> anyhow::Result<ClipEntry> {
 
 /// Encrypt and save an entry to ~/.clipwallet/vault/<id>.vlt
 pub fn save_to_vault(entry: &ClipEntry) -> anyhow::Result<PathBuf> {
-    let dir = vault_dir();
+    let dir = vault_dir()?;
     fs::create_dir_all(&dir)?;
 
     let ciphertext = encrypt_entry(entry)?;
@@ -148,7 +146,7 @@ pub fn save_to_vault(entry: &ClipEntry) -> anyhow::Result<PathBuf> {
 
 /// Load and decrypt a vault entry by its ID
 pub fn load_from_vault(id: u64) -> anyhow::Result<ClipEntry> {
-    let path = vault_dir().join(format!("{}.vlt", id));
+    let path = vault_dir()?.join(format!("{}.vlt", id));
     if !path.exists() {
         anyhow::bail!("Vault entry {} not found", id);
     }
@@ -159,7 +157,10 @@ pub fn load_from_vault(id: u64) -> anyhow::Result<ClipEntry> {
 
 /// List all entry IDs currently in the vault
 pub fn list_vault_ids() -> Vec<u64> {
-    let dir = vault_dir();
+    let dir = match vault_dir() {
+        Ok(d) => d,
+        Err(_) => return vec![],
+    };
     if !dir.exists() { return vec![]; }
 
     fs::read_dir(&dir)
@@ -182,7 +183,7 @@ pub fn list_vault_ids() -> Vec<u64> {
 
 /// Delete a single vault entry by ID
 pub fn delete_from_vault(id: u64) -> anyhow::Result<()> {
-    let path = vault_dir().join(format!("{}.vlt", id));
+    let path = vault_dir()?.join(format!("{}.vlt", id));
     if path.exists() {
         fs::remove_file(&path)?;
         info!("Deleted vault entry {}", id);

@@ -5,11 +5,9 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
 
-pub fn store_dir() -> PathBuf {
-    home_dir()
-        .expect("No home dir")
-        .join(".clipwallet")
-        .join("store")
+pub fn store_dir() -> anyhow::Result<PathBuf> {
+    let home = home_dir().ok_or_else(|| anyhow::anyhow!("No home dir found"))?;
+    Ok(home.join(".clipwallet").join("store"))
 }
 
 /// Atomically write bytes to path.
@@ -24,7 +22,10 @@ fn atomic_write(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
 /// Remove any leftover .tmp files from a previous crashed write.
 /// Called once on startup before load().
 pub fn cleanup_tmp_files() {
-    let dir = store_dir();
+    let dir = match store_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
     if !dir.exists() { return; }
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.filter_map(|e| e.ok()) {
@@ -43,7 +44,7 @@ pub fn flush(ram: &mut RamStore) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let dir = store_dir();
+    let dir = store_dir()?;
     fs::create_dir_all(&dir)?;
 
     // ── Static slots ──────────────────────────────────────────────────
@@ -76,7 +77,13 @@ pub fn flush(ram: &mut RamStore) -> anyhow::Result<()> {
 
 /// Load disk → RAM on startup. Preserves recency order via timestamps.
 pub fn load(ram: &mut RamStore) -> anyhow::Result<()> {
-    let dir = store_dir();
+    let dir = match store_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("Cannot determine store dir: {}", e);
+            return Ok(());
+        }
+    };
     if !dir.exists() {
         info!("No existing store — starting fresh");
         return Ok(());
