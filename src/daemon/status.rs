@@ -21,14 +21,21 @@ pub fn print_full_status() {
         _ => println!("  Process   : Not running"),
     }
 
-    // ── launchd ───────────────────────────────────────────────────────
-    let plist = home_dir()
-        .unwrap()
-        .join("Library/LaunchAgents/com.clipwallet.agent.plist");
-    println!(
-        "  launchd   : {}",
-        if plist.exists() { "Registered ✓" } else { "Not registered" }
-    );
+    // ── Auto-start ────────────────────────────────────────────────────
+    #[cfg(target_os = "macos")]
+    {
+        let plist = home_dir()
+            .unwrap()
+            .join("Library/LaunchAgents/com.clipwallet.agent.plist");
+        println!(
+            "  Auto-start: {}",
+            if plist.exists() { "Registered (launchd) ✓" } else { "Not registered" }
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("  Auto-start: Not supported on this platform");
+    }
 
     // ── Store stats ───────────────────────────────────────────────────
     let store = store_dir();

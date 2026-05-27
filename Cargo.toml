@@ -15,12 +15,10 @@ name = "clipwallet"
 path = "src/main.rs"
 
 [dependencies]
-# Global hotkey interception
-rdev          = "0.5"
-core-graphics = "0.23"
-core-foundation = "0.9"
+# Global hotkey interception (cross-platform)
+rdev = "0.5"
 
-# macOS clipboard read/write
+# Cross-platform clipboard read/write
 arboard = "3"
 
 # Async runtime
@@ -34,7 +32,7 @@ rmp-serde = "1"
 aes-gcm = "0.10"
 rand    = "0.8"
 
-# macOS Keychain
+# Keychain / Secret Service
 keyring = "2"
 
 # Signal handling
@@ -57,11 +55,16 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 hex    = "0.4"
 
-# Phase 5 — rich data types
+# Rich data types
 infer  = "0.15"
-objc   = "0.2"
 image  = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
 toml = "1.0.3"
+
+# macOS-specific: CGEventTap + raw NSPasteboard
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics   = "0.23"
+core-foundation = "0.9"
+objc            = "0.2"
 
 [profile.release]
 opt-level     = 3

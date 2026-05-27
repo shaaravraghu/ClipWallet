@@ -1,7 +1,9 @@
 pub mod disk;
 pub mod encrypted;
+pub mod fallback;
 pub mod ram;
 
+pub use fallback::FallbackChain;
 pub use ram::RamStore;
 #[allow(unused_imports)]
 pub use encrypted::{

@@ -65,16 +65,10 @@ impl ChordDetector {
             self.tab_consumed = false;
         }
 
-        // Chord broken when Cmd or Opt released — retain any keys still held
-        // so they can trigger timing-safely on release.  Also retain last_digit
-        // while pending chord keys exist: static mode needs it in evaluate_release().
-        if key == Key::MetaLeft || key == Key::MetaRight
-            || key == Key::Alt   || key == Key::AltGr
+        // Chord broken when Cmd (Meta on macOS, Control on Linux) or Opt released
+        if Self::is_cmd_key(&key) || key == Key::Alt || key == Key::AltGr
         {
             self.keys_pressed_in_chord.retain(|k| self.held.contains(k));
-            // Only clear last_digit when no pending chord keys remain.
-            // If keys are still pending, evaluate_release() needs it for
-            // StaticCopy / StaticCut / StaticPaste.
             if self.keys_pressed_in_chord.is_empty() {
                 self.last_digit = None;
             }
@@ -86,13 +80,31 @@ impl ChordDetector {
     // ── Modifier state ────────────────────────────────────────────────
 
     pub fn cmd(&self) -> bool {
-        self.held.contains(&Key::MetaLeft)
-            || self.held.contains(&Key::MetaRight)
+        Self::is_cmd_held(&self.held)
     }
 
     pub fn opt(&self) -> bool {
-        self.held.contains(&Key::Alt)
-            || self.held.contains(&Key::AltGr)
+        self.held.contains(&Key::Alt) || self.held.contains(&Key::AltGr)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn is_cmd_key(key: &Key) -> bool {
+        matches!(key, Key::MetaLeft | Key::MetaRight)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn is_cmd_key(key: &Key) -> bool {
+        matches!(key, Key::ControlLeft | Key::ControlRight)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn is_cmd_held(held: &HashSet<Key>) -> bool {
+        held.contains(&Key::MetaLeft) || held.contains(&Key::MetaRight)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn is_cmd_held(held: &HashSet<Key>) -> bool {
+        held.contains(&Key::ControlLeft) || held.contains(&Key::ControlRight)
     }
 
     fn shift(&self) -> bool {
