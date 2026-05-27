@@ -310,7 +310,7 @@ async fn run_service() -> anyhow::Result<()> {
     // ── Shared RAM store ──────────────────────────────────────────────────────
     let ram = Arc::new(RwLock::new(RamStore::new()));
     {
-        let mut w = ram.write().unwrap();
+        let mut w = ram.write().unwrap_or_else(|e| e.into_inner());
         disk::cleanup_tmp_files();
         if let Err(e) = disk::load(&mut w) {
             error!("Disk load failed: {}", e);
@@ -348,7 +348,7 @@ async fn run_service() -> anyhow::Result<()> {
         let mut ticker = interval(Duration::from_secs(60));
         loop {
             ticker.tick().await;
-            let mut w = ram_flush.write().unwrap();
+            let mut w = ram_flush.write().unwrap_or_else(|e| e.into_inner());
             if let Err(e) = disk::flush(&mut w) {
                 error!("Periodic flush failed: {}", e);
             }
@@ -359,12 +359,12 @@ async fn run_service() -> anyhow::Result<()> {
     let ram_signal = Arc::clone(&ram);
     ctrlc::set_handler(move || {
         info!("Shutdown signal — flushing to disk...");
-        let mut w = ram_signal.write().unwrap();
+        let mut w = ram_signal.write().unwrap_or_else(|e| e.into_inner());
         let _ = disk::flush(&mut w);
         info!("ClipWallet stopped cleanly ✓");
         std::process::exit(0);
     })
-    .expect("Cannot set signal handler");
+    .unwrap_or_else(|e| tracing::error!("Failed to set signal handler: {}", e));
 
     // ── Task 5: Cursor timeout watchdog ───────────────────────────────────────
     let ram_cursor = Arc::clone(&ram);
@@ -373,7 +373,7 @@ async fn run_service() -> anyhow::Result<()> {
         let mut ticker = interval(Duration::from_secs(1));
         loop {
             ticker.tick().await;
-            if ram_cursor.read().unwrap().cursor_timed_out() {
+            if ram_cursor.read().unwrap_or_else(|e| e.into_inner()).cursor_timed_out() {
                 let _ = tx_cursor.send(HotkeyAction::CursorReset);
             }
         }

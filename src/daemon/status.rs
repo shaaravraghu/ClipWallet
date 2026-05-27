@@ -8,6 +8,14 @@ use std::process::Command;
 pub fn print_full_status() {
     println!("── ClipWallet Status ────────────────────────────");
 
+    let home = match home_dir() {
+        Some(h) => h,
+        None => {
+            println!("Cannot determine home directory. Full status unavailable.");
+            return;
+        }
+    };
+
     // ── Process ───────────────────────────────────────────────────────
     let output = Command::new("pgrep")
         .args(["-x", "clipwallet"])
@@ -22,16 +30,14 @@ pub fn print_full_status() {
     }
 
     // ── launchd ───────────────────────────────────────────────────────
-    let plist = home_dir()
-        .unwrap()
-        .join("Library/LaunchAgents/com.clipwallet.agent.plist");
+    let plist = home.join("Library/LaunchAgents/com.clipwallet.agent.plist");
     println!(
         "  launchd   : {}",
         if plist.exists() { "Registered ✓" } else { "Not registered" }
     );
 
     // ── Store stats ───────────────────────────────────────────────────
-    let store = store_dir();
+    let store = store_dir().unwrap_or_else(|_| home.join(".clipwallet/store"));
     let static_count = (1..=9)
         .filter(|i| store.join(format!("slot_{}.mpk", i)).exists())
         .count();
@@ -48,7 +54,7 @@ pub fn print_full_status() {
     println!("  Ring      : {} on disk", ring_size);
 
     // ── Vault stats ───────────────────────────────────────────────────
-    let vault = vault_dir();
+    let vault = vault_dir().unwrap_or_else(|_| home.join(".clipwallet/vault"));
     let vault_count = if vault.exists() {
         fs::read_dir(&vault)
             .map(|d| d.filter_map(|e| e.ok()).count())
@@ -59,7 +65,7 @@ pub fn print_full_status() {
     println!("  Vault     : {} encrypted entries", vault_count);
 
     // ── Log paths ─────────────────────────────────────────────────────
-    let log_dir = home_dir().unwrap().join(".clipwallet/logs");
+    let log_dir = home.join(".clipwallet/logs");
     println!("  Logs      : {}", log_dir.display());
     println!("  Store     : {}", store.display());
     println!("  Vault     : {}", vault.display());
@@ -68,7 +74,8 @@ pub fn print_full_status() {
 
 /// Wipe all ClipWallet data from disk (called on full uninstall)
 pub fn wipe_all_data() -> anyhow::Result<()> {
-    let base = home_dir().unwrap().join(".clipwallet");
+    let home = home_dir().ok_or_else(|| anyhow::anyhow!("No home dir found"))?;
+    let base = home.join(".clipwallet");
     if base.exists() {
         fs::remove_dir_all(&base)?;
         println!("All ClipWallet data removed from disk ✓");

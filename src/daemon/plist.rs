@@ -7,16 +7,16 @@ use tracing::info;
 const PLIST_LABEL: &str = "com.clipwallet.agent";
 const INSTALL_PATH: &str = "/usr/local/bin/clipwallet";
 
-fn plist_path() -> PathBuf {
-    home_dir()
-        .expect("No home dir")
+fn plist_path() -> anyhow::Result<PathBuf> {
+    let home = home_dir().ok_or_else(|| anyhow::anyhow!("No home dir found"))?;
+    Ok(home
         .join("Library")
         .join("LaunchAgents")
-        .join(format!("{}.plist", PLIST_LABEL))
+        .join(format!("{}.plist", PLIST_LABEL)))
 }
 
 pub fn install() -> anyhow::Result<()> {
-    let home = home_dir().expect("No home dir");
+    let home = home_dir().ok_or_else(|| anyhow::anyhow!("No home dir found"))?;
     let log_dir = home.join(".clipwallet").join("logs");
     fs::create_dir_all(&log_dir)?;
 
@@ -65,18 +65,21 @@ pub fn install() -> anyhow::Result<()> {
         home   = home.to_string_lossy(),
     );
 
-    let path = plist_path();
-    fs::create_dir_all(path.parent().unwrap())?;
+    let path = plist_path()?;
+    let parent = path.parent().ok_or_else(|| anyhow::anyhow!("Invalid plist path"))?;
+    fs::create_dir_all(parent)?;
     fs::write(&path, &plist)?;
     info!("Plist written → {:?}", path);
 
+    let path_str = path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid unicode in plist path"))?;
+
     // Unload first in case an old version is running
     let _ = Command::new("launchctl")
-        .args(["unload", path.to_str().unwrap()])
+        .args(["unload", path_str])
         .output();
 
     Command::new("launchctl")
-        .args(["load", "-w", path.to_str().unwrap()])
+        .args(["load", "-w", path_str])
         .status()?;
 
     info!("ClipWallet daemon registered with launchd ✓");
@@ -85,10 +88,11 @@ pub fn install() -> anyhow::Result<()> {
 }
 
 pub fn uninstall() -> anyhow::Result<()> {
-    let path = plist_path();
+    let path = plist_path()?;
     if path.exists() {
+        let path_str = path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid unicode in plist path"))?;
         let _ = Command::new("launchctl")
-            .args(["unload", path.to_str().unwrap()])
+            .args(["unload", path_str])
             .output();
         fs::remove_file(&path)?;
         info!("ClipWallet daemon removed from launchd ✓");

@@ -41,13 +41,23 @@ pub fn start_event_tap(tx: SyncSender<HotkeyAction>, mode_static: bool) {
                 mode_static,
             )
         },
-    )
-    .expect("CGEventTap creation failed — ensure Accessibility permission is granted");
+    );
 
-    let loop_src = tap
-        .mach_port
-        .create_runloop_source(0)
-        .expect("Failed to create CFRunLoop source");
+    let tap = match tap {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("CGEventTap creation failed ({:?}) — ensure Accessibility permission is granted", e);
+            return;
+        }
+    };
+
+    let loop_src = match tap.mach_port.create_runloop_source(0) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to create CFRunLoop source: {:?}", e);
+            return;
+        }
+    };
 
     let run_loop = CFRunLoop::get_current();
     run_loop.add_source(&loop_src, unsafe { kCFRunLoopCommonModes });
