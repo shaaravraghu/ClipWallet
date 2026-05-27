@@ -129,3 +129,40 @@ pub fn load(ram: &mut RamStore) -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// Retrieve a specific entry by ID from disk.
+/// Scans both the dynamic ring and static slots.
+pub fn retrieve_by_id(id: u64) -> anyhow::Result<Option<ClipEntry>> {
+    let dir = store_dir();
+    if !dir.exists() {
+        return Ok(None);
+    }
+
+    // 1. Check dynamic ring
+    let ring_path = dir.join("dynamic_ring.mpk");
+    if ring_path.exists() {
+        if let Ok(bytes) = fs::read(&ring_path) {
+            if let Ok(entries) = rmp_serde::from_slice::<Vec<ClipEntry>>(&bytes) {
+                if let Some(entry) = entries.into_iter().find(|e| e.id == id) {
+                    return Ok(Some(entry));
+                }
+            }
+        }
+    }
+
+    // 2. Check static slots
+    for i in 1..=9 {
+        let path = dir.join(format!("slot_{}.mpk", i));
+        if path.exists() {
+            if let Ok(bytes) = fs::read(&path) {
+                if let Ok(entry) = rmp_serde::from_slice::<ClipEntry>(&bytes) {
+                    if entry.id == id {
+                        return Ok(Some(entry));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}

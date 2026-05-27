@@ -5,7 +5,8 @@ use crate::hotkey::{
     simulate_copy, simulate_cut, simulate_paste_delayed, HotkeyAction,
 };
 use crate::notify;
-use crate::storage::encrypted::{load_from_vault, save_to_vault};
+use crate::storage::encrypted::save_to_vault;
+use crate::storage::fallback::FallbackChain;
 use crate::storage::ram::{next_id, RamStore};
 use arboard::{Clipboard, ImageData};
 use std::borrow::Cow;
@@ -16,13 +17,16 @@ const PASTE_SETTLE_MS: u64 = 60;
 
 pub struct Engine {
     ram:       Arc<RwLock<RamStore>>,
+    fallback:  FallbackChain,
     clipboard: Clipboard,
 }
 
 impl Engine {
     pub fn new(ram: Arc<RwLock<RamStore>>) -> anyhow::Result<Self> {
+        let fallback = FallbackChain::new(Arc::clone(&ram));
         Ok(Self {
             ram,
+            fallback,
             clipboard:    Clipboard::new()?,
         })
     }
@@ -384,13 +388,14 @@ impl Engine {
     }
 
     pub fn decrypt_slot(&mut self, id: u64, slot: usize) {
-        match load_from_vault(id) {
-            Ok(mut entry) => {
-                entry.encrypted = false;
-                info!("[Vault] Decrypted id={} → slot {}", id, slot);
+        match self.fallback.retrieve(id) {
+            Ok(Some(mut entry)) => {
+                entry.encrypted = false; // ensure it's marked decrypted if it came from vault
+                info!("[Fallback] Retrieved id={} → slot {}", id, slot);
                 self.ram.write().unwrap().set_static(slot, entry);
             }
-            Err(e) => warn!("[Vault] Decrypt failed: {}", e),
+            Ok(None) => warn!("[Fallback] Cache Miss for id={} across all layers", id),
+            Err(e) => warn!("[Fallback] Retrieve failed for id={}: {}", id, e),
         }
     }
 }

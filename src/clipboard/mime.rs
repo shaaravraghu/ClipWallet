@@ -1,8 +1,6 @@
 //! Detects the most specific data type from raw bytes.
 //! Used to classify clipboard content before storing.
 
-use crate::clipboard::types::ClipData;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum DetectedType {
     PlainText,

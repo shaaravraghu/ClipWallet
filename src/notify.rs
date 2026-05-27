@@ -1,22 +1,40 @@
-//! macOS system notifications for ClipWallet.
-//! Uses osascript — no extra crate, works on all macOS versions.
+//! System notifications for ClipWallet.
+//! macOS: osascript. Linux: notify-send.
 //! Spawned fire-and-forget so it never blocks the event loop.
 
 use std::process::Command;
 
-/// Send a native macOS banner notification.
+/// Send a native notification.
 pub fn notify(title: &str, subtitle: &str, body: &str) {
+    #[cfg(target_os = "macos")]
+    notify_macos(title, subtitle, body);
+    #[cfg(not(target_os = "macos"))]
+    notify_linux(title, subtitle, body);
+}
+
+#[cfg(target_os = "macos")]
+fn notify_macos(title: &str, subtitle: &str, body: &str) {
     let t = title.replace('"', "'");
     let s = subtitle.replace('"', "'");
     let b = body.replace('"', "'");
-
     let script = if s.is_empty() {
         format!(r#"display notification "{}" with title "{}""#, b, t)
     } else {
         format!(r#"display notification "{}" with title "{}" subtitle "{}""#, b, t, s)
     };
-
     let _ = Command::new("osascript").args(["-e", &script]).spawn();
+}
+
+#[cfg(not(target_os = "macos"))]
+fn notify_linux(title: &str, subtitle: &str, body: &str) {
+    let summary = if subtitle.is_empty() {
+        title.to_string()
+    } else {
+        format!("{} — {}", title, subtitle)
+    };
+    let _ = Command::new("notify-send")
+        .args([&summary, body])
+        .spawn();
 }
 
 // ── Static mode ───────────────────────────────────────────────────────────────
