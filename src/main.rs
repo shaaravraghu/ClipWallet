@@ -9,7 +9,7 @@ mod storage;
 use crate::config::{set_mode, ClipMode};
 use crate::engine::Engine;
 use crate::hotkey::HotkeyAction;
-use crate::storage::{disk, RamStore};
+use crate::storage::{disk, ram::FLUSH_INTERVAL_SECS, RamStore};
 use clap::{Parser, Subcommand};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
@@ -340,9 +340,11 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
             let _ = tx_bridge.send(action);
         }
     });
-    std::thread::spawn(move || {
-        hotkey::grabber::start_event_tap(tap_tx, mode_static);
-    });
+    // Returns a handle we can use from the shutdown handler to stop the tap cleanly 
+    // via CFRunLoopStop instead of leaving it running while
+    // we flush: closes the race where late events would mutate RAM
+    // mid-flush.
+    let grabber = hotkey::grabber::spawn_event_tap(tap_tx, mode_static);
 
     // ── Task 2: Engine event loop ─────────────────────────────────────────────
     let ram_engine = Arc::clone(&ram);
@@ -354,9 +356,13 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
     });
 
     // ── Task 3: Periodic flush (every 60 seconds) ─────────────────────────────
+    // Interval and rationale documented in storage/ram.rs as
+    // FLUSH_INTERVAL_SECS. This is the only protection against data loss
+    // from SIGKILL / kill -9 / kernel panic / hard power-off, since those
+    // bypass the ctrlc handler below.
     let ram_flush = Arc::clone(&ram);
     let flush_handle = tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_secs(60));
+        let mut ticker = interval(Duration::from_secs(FLUSH_INTERVAL_SECS));
         loop {
             ticker.tick().await;
             let mut w = ram_flush.write().unwrap();
@@ -367,11 +373,33 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
     });
 
     // ── Task 4: Signal handler (Ctrl+C / SIGTERM → clean shutdown) ────────────
+    // ctrlc's "termination" feature in Cargo.toml means this handler catches
+    // both SIGINT and SIGTERM. Do NOT add a tokio::signal::unix handler in
+    // parallel: they will race for the same signals.
     let ram_signal = Arc::clone(&ram);
+    let grabber_signal = grabber.clone();
+    let shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
     ctrlc::set_handler(move || {
+        // Re-entry guard: launchd can fire SIGTERM more than once during a
+        // forced logout, and a fast double Ctrl+C will also re-enter.
+        // Without this, the second flush races the first and can corrupt
+        // the on-disk store.
+        if shutting_down.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         info!("Shutdown signal — flushing to disk...");
+
+        // 1. Stop the CGEventTap thread BEFORE flushing so no new actions
+        //    can mutate RAM while we serialize it.
+        grabber_signal.stop();
+
+        // 2. Force-flush regardless of the dirty flag. We don't trust the
+        //    flag at shutdown: if something is in RAM that isn't on disk,
+        //    it doesn't matter whether the flag was set correctly.
         let mut w = ram_signal.write().unwrap();
-        let _ = disk::flush(&mut w);
+        if let Err(e) = disk::flush_force(&mut w) {
+            error!("Final flush failed: {}", e);
+        }
         info!("ClipWallet stopped cleanly ✓");
         std::process::exit(0);
     })

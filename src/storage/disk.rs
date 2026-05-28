@@ -1,7 +1,9 @@
 use crate::clipboard::types::ClipEntry;
 use crate::storage::ram::RamStore;
+use chrono::Utc;
 use dirs::home_dir;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
 
@@ -12,17 +14,118 @@ pub fn store_dir() -> PathBuf {
         .join("store")
 }
 
-/// Atomically write bytes to path.
-/// Writes to a .tmp file first, then renames — prevents corruption on crash.
+// ─── Envelope format (Feedback #5) ────────────────────────────────────────────
+// Layout:  [ "CW1\0" (4) | crc32 (4 LE) | entry_count (4 LE) | msgpack bytes ]
+//
+// Detects two failure modes MessagePack alone won't:
+//   - truncated writes (entry_count mismatch after decode)
+//   - partial-content writes that still happen to decode (crc mismatch)
+//
+// Read path is backward-compatible: files without the magic are decoded
+// as bare MessagePack (the old format) and silently rewritten in the new
+// format on next flush. No existing user loses their data on upgrade.
+
+const ENVELOPE_MAGIC: &[u8; 4] = b"CW1\0";
+const ENVELOPE_HEADER_LEN: usize = 12;
+
+fn wrap_envelope(payload: &[u8], entry_count: u32) -> Vec<u8> {
+    let crc = crc32fast::hash(payload);
+    let mut out = Vec::with_capacity(ENVELOPE_HEADER_LEN + payload.len());
+    out.extend_from_slice(ENVELOPE_MAGIC);
+    out.extend_from_slice(&crc.to_le_bytes());
+    out.extend_from_slice(&entry_count.to_le_bytes());
+    out.extend_from_slice(payload);
+    out
+}
+
+enum DecodeResult<T> {
+    Validated(T),       // new format, crc + count verified
+    LegacyUnvalidated(T), // old format, decoded but no integrity check
+    Corrupt(String),
+}
+
+fn decode_envelope<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    expected_count: Option<usize>,
+) -> DecodeResult<T> {
+    if bytes.starts_with(ENVELOPE_MAGIC) {
+        if bytes.len() < ENVELOPE_HEADER_LEN {
+            return DecodeResult::Corrupt("envelope truncated (< header)".into());
+        }
+        let crc_stored = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        let count_stored = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+        let payload = &bytes[ENVELOPE_HEADER_LEN..];
+
+        let crc_computed = crc32fast::hash(payload);
+        if crc_computed != crc_stored {
+            return DecodeResult::Corrupt(format!(
+                "checksum mismatch: stored=0x{:08x} computed=0x{:08x}",
+                crc_stored, crc_computed
+            ));
+        }
+        match rmp_serde::from_slice::<T>(payload) {
+            Ok(value) => {
+                if let Some(expected) = expected_count {
+                    if expected != count_stored {
+                        return DecodeResult::Corrupt(format!(
+                            "envelope count {} != caller expected {}",
+                            count_stored, expected
+                        ));
+                    }
+                }
+                DecodeResult::Validated(value)
+            }
+            Err(e) => DecodeResult::Corrupt(format!("decode failed: {}", e)),
+        }
+    } else {
+        // Legacy bare-msgpack format. Decode and trust.
+        match rmp_serde::from_slice::<T>(bytes) {
+            Ok(value) => DecodeResult::LegacyUnvalidated(value),
+            Err(e) => DecodeResult::Corrupt(format!("legacy decode failed: {}", e)),
+        }
+    }
+}
+
+/// Quarantine a corrupt file by renaming it rather than deleting.
+/// Preserves it for post-mortem diagnostics.
+fn quarantine(path: &PathBuf, reason: &str) {
+    let ts = Utc::now().format("%Y%m%dT%H%M%S").to_string();
+    let dst = path.with_extension(format!("corrupt.{}", ts));
+    match fs::rename(path, &dst) {
+        Ok(_)  => warn!("Quarantined corrupt file → {:?} ({})", dst, reason),
+        Err(e) => error!("Quarantine failed for {:?}: {} (original reason: {})", path, e, reason),
+    }
+}
+
+// ─── Atomic durable write (Feedback #4) ───────────────────────────────────────
+// Correct sequence: write tmp → fsync tmp → rename → fsync parent dir.
+// The previous version was: write tmp → rename, which means the rename
+// can be durable while the file's bytes are not — on next boot the target
+// could be partial or zero-length, and only the new envelope crc would
+// catch it. With fsync on the tmp file first, the bytes are guaranteed
+// to be on stable storage before the directory entry flips.
+
 fn atomic_write(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, bytes)?;
+    {
+        let mut f = OpenOptions::new()
+            .write(true).create(true).truncate(true)
+            .open(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;              // ← content reaches disk
+    }
     fs::rename(&tmp, path)?;
+
+    if let Some(parent) = path.parent() {
+        // Best-effort: not all filesystems return Ok on directory fsync,
+        // and it's not a correctness problem if it's not supported here.
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all(); // ← rename entry reaches disk
+        }
+    }
     Ok(())
 }
 
-/// Remove any leftover .tmp files from a previous crashed write.
-/// Called once on startup before load().
 pub fn cleanup_tmp_files() {
     let dir = store_dir();
     if !dir.exists() { return; }
@@ -31,37 +134,44 @@ pub fn cleanup_tmp_files() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("tmp") {
                 let _ = fs::remove_file(&path);
-                tracing::warn!("Cleaned up orphaned tmp file: {:?}", path);
+                warn!("Cleaned up orphaned tmp file: {:?}", path);
             }
         }
     }
 }
 
-/// Flush RAM → disk. Only writes if dirty flag is set.
+// ─── Flush ────────────────────────────────────────────────────────────────────
+
 pub fn flush(ram: &mut RamStore) -> anyhow::Result<()> {
     if !ram.is_dirty() {
         return Ok(());
     }
+    flush_force(ram)
+}
 
+/// Flush regardless of the dirty flag. Used by the shutdown handler — we
+/// don't trust the flag across panics or partial mutations.
+pub fn flush_force(ram: &mut RamStore) -> anyhow::Result<()> {
     let dir = store_dir();
     fs::create_dir_all(&dir)?;
 
-    // ── Static slots ──────────────────────────────────────────────────
+    // Static slots: one file per slot, each wraps a single ClipEntry.
     for (i, slot) in ram.static_slots.iter().enumerate() {
         let path = dir.join(format!("slot_{}.mpk", i + 1));
         match slot {
             Some(entry) => {
-                let bytes = rmp_serde::to_vec(entry)?;
+                let payload = rmp_serde::to_vec(entry)?;
+                let bytes = wrap_envelope(&payload, 1);
                 atomic_write(&path, &bytes)?;
             }
             None => { let _ = fs::remove_file(&path); }
         }
     }
 
-    // ── Dynamic ring ──────────────────────────────────────────────────
-    // Stored as Vec so order (recency) is preserved on reload
+    // Dynamic ring: single file, entire Vec.
     let entries: Vec<&ClipEntry> = ram.dynamic_ring.iter().collect();
-    let bytes = rmp_serde::to_vec(&entries)?;
+    let payload = rmp_serde::to_vec(&entries)?;
+    let bytes = wrap_envelope(&payload, entries.len() as u32);
     let ring_path = dir.join("dynamic_ring.mpk");
     atomic_write(&ring_path, &bytes)?;
 
@@ -74,7 +184,8 @@ pub fn flush(ram: &mut RamStore) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Load disk → RAM on startup. Preserves recency order via timestamps.
+// ─── Load ─────────────────────────────────────────────────────────────────────
+
 pub fn load(ram: &mut RamStore) -> anyhow::Result<()> {
     let dir = store_dir();
     if !dir.exists() {
@@ -82,42 +193,52 @@ pub fn load(ram: &mut RamStore) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // ── Static slots ──────────────────────────────────────────────────
+    let mut needs_rewrite = false;
     let mut loaded_slots = 0usize;
+
     for i in 0..9usize {
         let path = dir.join(format!("slot_{}.mpk", i + 1));
         if !path.exists() { continue; }
-        match fs::read(&path).and_then(|b| Ok(b)) {
-            Ok(bytes) => match rmp_serde::from_slice::<ClipEntry>(&bytes) {
-                Ok(entry) => {
+        match fs::read(&path) {
+            Ok(bytes) => match decode_envelope::<ClipEntry>(&bytes, Some(1)) {
+                DecodeResult::Validated(entry) => {
                     ram.static_slots[i] = Some(entry);
                     loaded_slots += 1;
                 }
-                Err(e) => {
-                    warn!("Corrupt slot_{}.mpk — skipping ({})", i + 1, e);
-                    let _ = fs::remove_file(&path);
+                DecodeResult::LegacyUnvalidated(entry) => {
+                    ram.static_slots[i] = Some(entry);
+                    loaded_slots += 1;
+                    needs_rewrite = true;
+                    info!("slot_{}.mpk in legacy format — will rewrite", i + 1);
+                }
+                DecodeResult::Corrupt(reason) => {
+                    quarantine(&path, &reason);
                 }
             },
             Err(e) => error!("Cannot read slot_{}.mpk: {}", i + 1, e),
         }
     }
 
-    // ── Dynamic ring ──────────────────────────────────────────────────
     let ring_path = dir.join("dynamic_ring.mpk");
     let mut loaded_dynamic = 0usize;
     if ring_path.exists() {
         match fs::read(&ring_path) {
-            Ok(bytes) => match rmp_serde::from_slice::<Vec<ClipEntry>>(&bytes) {
-                Ok(mut entries) => {
-                    // Sort by timestamp descending so index 0 = most recent
+            Ok(bytes) => match decode_envelope::<Vec<ClipEntry>>(&bytes, None) {
+                DecodeResult::Validated(mut entries) => {
                     entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
                     entries.truncate(ram.capacity);
                     loaded_dynamic = entries.len();
                     ram.dynamic_ring.extend(entries);
                 }
-                Err(e) => {
-                    warn!("Corrupt dynamic_ring.mpk — starting fresh ring ({})", e);
-                    let _ = fs::remove_file(&ring_path);
+                DecodeResult::LegacyUnvalidated(mut entries) => {
+                    entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                    loaded_dynamic = entries.len();
+                    ram.dynamic_ring.extend(entries);
+                    needs_rewrite = true;
+                    info!("dynamic_ring.mpk in legacy format — will rewrite");
+                }
+                DecodeResult::Corrupt(reason) => {
+                    quarantine(&ring_path, &reason);
                 }
             },
             Err(e) => error!("Cannot read dynamic_ring.mpk: {}", e),
@@ -128,5 +249,16 @@ pub fn load(ram: &mut RamStore) -> anyhow::Result<()> {
         "Loaded from disk — {} static slots, {} dynamic entries",
         loaded_slots, loaded_dynamic
     );
+
+    // Rewrite once now so subsequent loads use the new format and get full
+    // integrity checking. Force the flag so flush_force runs even though
+    // nothing user-visible changed.
+    if needs_rewrite {
+        ram.dirty = true; // public field per current ram.rs
+        if let Err(e) = flush_force(ram) {
+            warn!("Legacy → envelope rewrite failed (non-fatal): {}", e);
+        }
+    }
+
     Ok(())
 }

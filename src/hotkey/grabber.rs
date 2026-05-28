@@ -5,9 +5,11 @@
 //!      keys_pressed_in_chord even when was_active is false — covers the case
 //!      where Opt's FlagsChanged fires before C's KeyUp arrives.
 
-use crate::hotkey::{ChordDetector, HotkeyAction};
 use core_foundation::base::TCFType;
-use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopRef, CFRunLoopStop};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::sync_channel;
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation,
     CGEventTapOptions, CGEventTapPlacement, CGEventType, EventField,
@@ -16,21 +18,75 @@ use std::cell::RefCell;
 use std::sync::mpsc::SyncSender;
 use tracing::{debug, info};
 
-pub fn start_event_tap(tx: SyncSender<HotkeyAction>, mode_static: bool) {
+/// Owned by main; calling `.stop()` tears down the CGEventTap thread.
+#[derive(Clone)]
+pub struct GrabberHandle {
+    run_loop: Arc<RunLoopHandle>,
+    suppressed: Arc<AtomicBool>,
+}
+
+struct RunLoopHandle(CFRunLoopRef);
+// CFRunLoopStop is documented thread-safe on the run-loop ref.
+unsafe impl Send for RunLoopHandle {}
+unsafe impl Sync for RunLoopHandle {}
+
+impl GrabberHandle {
+    pub fn stop(&self) {
+        // Flip the flag FIRST so any callback already in flight returns
+        // without dispatching a HotkeyAction.
+        self.suppressed.store(true, Ordering::SeqCst);
+        unsafe { CFRunLoopStop(self.run_loop.0); }
+    }
+}
+
+/// Spawn the event tap on its own OS thread and return a stoppable handle.
+/// Replaces the previous fire-and-forget `start_event_tap` call site.
+pub fn spawn_event_tap(
+    tx: SyncSender<HotkeyAction>,
+    mode_static: bool,
+) -> GrabberHandle {
+    let (loop_tx, loop_rx) = sync_channel::<CFRunLoopRef>(1);
+    let suppressed = Arc::new(AtomicBool::new(false));
+    let suppressed_thread = suppressed.clone();
+
+    std::thread::Builder::new()
+        .name("clipwallet-grabber".into())
+        .spawn(move || {
+            start_event_tap_inner(tx, mode_static, loop_tx, suppressed_thread);
+        })
+        .expect("spawn grabber thread");
+
+    let run_loop = loop_rx
+        .recv()
+        .expect("grabber thread failed before publishing its run loop");
+    GrabberHandle {
+        run_loop: Arc::new(RunLoopHandle(run_loop)),
+        suppressed,
+    }
+}
+
+fn start_event_tap_inner(
+    tx: SyncSender<HotkeyAction>,
+    mode_static: bool,
+    loop_tx: std::sync::mpsc::SyncSender<CFRunLoopRef>,
+    suppressed: Arc<AtomicBool>,
+) {
     let detector      = RefCell::new(ChordDetector::new());
     let ignore_next_c = RefCell::new(false);
     let ignore_next_x = RefCell::new(false);
+    let suppressed_cb = suppressed.clone();
 
     let tap = CGEventTap::new(
         CGEventTapLocation::HID,
         CGEventTapPlacement::HeadInsertEventTap,
         CGEventTapOptions::Default,
-        vec![
-            CGEventType::KeyDown,
-            CGEventType::KeyUp,
-            CGEventType::FlagsChanged,
-        ],
+        vec![CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged],
         move |_proxy, event_type, event| {
+            // Shutdown gate: once main has called handle.stop(), let every
+            // event pass through unmodified instead of dispatching actions.
+            if suppressed_cb.load(Ordering::Relaxed) {
+                return Some(event.to_owned());
+            }
             handle_event(
                 &mut detector.borrow_mut(),
                 &mut ignore_next_c.borrow_mut(),
@@ -53,8 +109,13 @@ pub fn start_event_tap(tx: SyncSender<HotkeyAction>, mode_static: bool) {
     run_loop.add_source(&loop_src, unsafe { kCFRunLoopCommonModes });
     tap.enable();
 
+    // Publish the run-loop ref to main BEFORE blocking. The handle is now
+    // usable for shutdown.
+    let _ = loop_tx.send(run_loop.as_concrete_TypeRef());
+
     info!("CGEventTap active — key interception running");
     CFRunLoop::run_current();
+    info!("CGEventTap stopped");
 }
 
 fn handle_event(
