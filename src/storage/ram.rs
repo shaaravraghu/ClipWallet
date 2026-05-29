@@ -2,7 +2,7 @@ use crate::clipboard::types::{ClipEntry, EntryId};
 use std::collections::VecDeque;
 use std::time::Instant;
 
-pub const MAX_DYNAMIC:  usize = 50;
+
 pub const STATIC_SLOTS: usize = 9;
 
 /// Cursor timeout in seconds — resets to most recent after this idle period
@@ -22,25 +22,25 @@ pub struct RamStore {
     pub static_cursor:  usize,
     pub dynamic_ring:   VecDeque<ClipEntry>,
     pub dynamic_cursor: usize,
+    pub capacity:       usize,
 
     /// Tracks when the user last navigated — used by timeout task
     pub last_nav_time:  Instant,
 
     pub dirty: bool,
 }
-
 impl RamStore {
-    pub fn new() -> Self {
+    pub fn new(capacity: usize) -> Self {
         Self {
-            static_slots:  std::array::from_fn(|_| None),
+            static_slots: std::array::from_fn(|_| None),
             static_cursor: 0,
-            dynamic_ring:  VecDeque::with_capacity(MAX_DYNAMIC),
+            dynamic_ring: VecDeque::with_capacity(capacity),
             dynamic_cursor: 0,
+            capacity,
             last_nav_time: Instant::now(),
             dirty: false,
         }
     }
-
     // ── Static slots ──────────────────────────────────────────────────
 
     pub fn set_static(&mut self, slot: usize, entry: ClipEntry) {
@@ -117,13 +117,13 @@ impl RamStore {
     /// Push to front. Returns the evicted entry label if ring was full.
     pub fn push_dynamic(&mut self, entry: ClipEntry) -> Option<String> {
         if let Some(latest) = self.dynamic_ring.front() {
-        if latest.data == entry.data {
-            return None;
+            if latest.data == entry.data {
+                return None;
+            }
         }
-    }
 
-    let mut evicted = None;
-    if self.dynamic_ring.len() >= MAX_DYNAMIC {
+        let mut evicted = None;
+        if self.dynamic_ring.len() >= self.capacity {
             if let Some(old) = self.dynamic_ring.pop_back() {
                 evicted = Some(format!(
                     "id={} ({})",
@@ -189,3 +189,4 @@ impl RamStore {
     pub fn clear_dirty(&mut self) { self.dirty = false; }
     pub fn is_dirty(&self)        -> bool { self.dirty }
 }
+

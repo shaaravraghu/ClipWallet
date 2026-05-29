@@ -111,6 +111,7 @@ pub fn load(ram: &mut RamStore) -> anyhow::Result<()> {
                 Ok(mut entries) => {
                     // Sort by timestamp descending so index 0 = most recent
                     entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                    entries.truncate(ram.capacity);
                     loaded_dynamic = entries.len();
                     ram.dynamic_ring.extend(entries);
                 }
