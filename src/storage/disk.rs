@@ -14,7 +14,7 @@ pub fn store_dir() -> PathBuf {
         .join("store")
 }
 
-// ─── Envelope format (Feedback #5) ────────────────────────────────────────────
+// ─── Envelope format ────────────────────────────────────────────
 // Layout:  [ "CW1\0" (4) | crc32 (4 LE) | entry_count (4 LE) | msgpack bytes ]
 //
 // Detects two failure modes MessagePack alone won't:
@@ -261,4 +261,81 @@ pub fn load(ram: &mut RamStore) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_envelope_roundtrip() {
+        let payload_data = vec!["entry1".to_string(), "entry2".to_string()];
+        let msgpack_payload = rmp_serde::to_vec(&payload_data).unwrap();
+        
+        let enveloped = wrap_envelope(&msgpack_payload, 2);
+        
+        let result = decode_envelope::<Vec<String>>(&enveloped, Some(2));
+        match result {
+            DecodeResult::Validated(decoded) => assert_eq!(decoded, payload_data),
+            _ => panic!("Expected Validated result"),
+        }
+    }
+
+    #[test]
+    fn test_legacy_format_fallback() {
+        let payload_data = vec!["legacy_entry".to_string()];
+        let msgpack_payload = rmp_serde::to_vec(&payload_data).unwrap();
+        
+        let result = decode_envelope::<Vec<String>>(&msgpack_payload, Some(1));
+        match result {
+            DecodeResult::LegacyUnvalidated(decoded) => assert_eq!(decoded, payload_data),
+            _ => panic!("Expected LegacyUnvalidated result"),
+        }
+    }
+
+    #[test]
+    fn test_crc_corruption_detection() {
+        let payload_data = vec!["test_data".to_string()];
+        let msgpack_payload = rmp_serde::to_vec(&payload_data).unwrap();
+        let mut enveloped = wrap_envelope(&msgpack_payload, 1);
+        
+        // Corrupt the payload section
+        enveloped[12] ^= 0xFF; 
+        
+        let result = decode_envelope::<Vec<String>>(&enveloped, Some(1));
+        match result {
+            DecodeResult::Corrupt(reason) => assert!(reason.contains("checksum mismatch")),
+            _ => panic!("Expected Corrupt result due to CRC mismatch"),
+        }
+    }
+
+    #[test]
+    fn test_truncation_detection() {
+        let payload_data = vec!["test_data".to_string()];
+        let msgpack_payload = rmp_serde::to_vec(&payload_data).unwrap();
+        let mut enveloped = wrap_envelope(&msgpack_payload, 1);
+        
+        // Truncate to simulate partial write
+        enveloped.truncate(10); 
+        
+        let result = decode_envelope::<Vec<String>>(&enveloped, Some(1));
+        match result {
+            DecodeResult::Corrupt(reason) => assert!(reason.contains("envelope truncated")),
+            _ => panic!("Expected Corrupt result due to truncation"),
+        }
+    }
+
+    #[test]
+    fn test_count_mismatch_detection() {
+        let payload_data = vec!["test_data".to_string()];
+        let msgpack_payload = rmp_serde::to_vec(&payload_data).unwrap();
+        
+        let enveloped = wrap_envelope(&msgpack_payload, 1);
+        let result = decode_envelope::<Vec<String>>(&enveloped, Some(5));
+        
+        match result {
+            DecodeResult::Corrupt(reason) => assert!(reason.contains("count 1 != caller expected 5")),
+            _ => panic!("Expected Corrupt result due to count mismatch"),
+        }
+    }
 }

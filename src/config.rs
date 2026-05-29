@@ -20,7 +20,7 @@ impl std::fmt::Display for ClipMode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub mode: ClipMode,
     #[serde(default = "default_ring_capacity")]

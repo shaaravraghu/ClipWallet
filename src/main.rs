@@ -7,6 +7,7 @@ mod notify;
 mod storage;
 
 use crate::config::{set_mode, ClipMode};
+use crate::config::Config;
 use crate::engine::Engine;
 use crate::hotkey::HotkeyAction;
 use crate::storage::{disk, ram::FLUSH_INTERVAL_SECS, RamStore};

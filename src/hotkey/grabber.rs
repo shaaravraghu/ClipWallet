@@ -5,6 +5,7 @@
 //!      keys_pressed_in_chord even when was_active is false — covers the case
 //!      where Opt's FlagsChanged fires before C's KeyUp arrives.
 
+use crate::hotkey::{ChordDetector, HotkeyAction}; 
 use core_foundation::base::TCFType;
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopRef, CFRunLoopStop};
 use std::sync::Arc;
