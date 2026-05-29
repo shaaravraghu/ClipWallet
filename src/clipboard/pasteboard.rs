@@ -123,8 +123,7 @@ unsafe fn nsstring(s: &str) -> *mut Object {
     let obj: *mut Object = msg_send![obj, initWithBytes: bytes
                            length: len
                          encoding: 4u64]; // NSUTF8StringEncoding = 4
-    let _: () = msg_send![obj, autorelease];
-    obj
+    msg_send![obj, autorelease]
 }
 
 /// Create an NSData from a byte slice
