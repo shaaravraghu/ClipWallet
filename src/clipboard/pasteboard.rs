@@ -120,9 +120,10 @@ unsafe fn nsstring(s: &str) -> *mut Object {
     let bytes = s.as_ptr() as *const std::os::raw::c_void;
     let len   = s.len();
     let obj: *mut Object = msg_send![cls, alloc];
-    msg_send![obj, initWithBytes: bytes
+    let obj: *mut Object = msg_send![obj, initWithBytes: bytes
                            length: len
-                         encoding: 4u64] // NSUTF8StringEncoding = 4
+                         encoding: 4u64]; // NSUTF8StringEncoding = 4
+    msg_send![obj, autorelease]
 }
 
 /// Create an NSData from a byte slice
