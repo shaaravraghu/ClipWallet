@@ -1,0 +1,122 @@
+name: Build artifacts and create Release (tag-triggered)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build (matrix)
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+          - target: aarch64-apple-darwin
+            runner: macos-13-arm64
+
+    env:
+      SKIP_CODESIGN: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Cargo fmt check
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --release
+
+      - name: Build & package
+        run: |
+          chmod +x ./build_release.sh
+          ./build_release.sh
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist
+
+  create_release:
+    name: Create Release and upload assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-x86_64-apple-darwin
+          path: artifacts/x86
+
+      - name: Download aarch64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-aarch64-apple-darwin
+          path: artifacts/arm
+
+      - name: Verify artifacts exist
+        run: |
+          set -euo pipefail
+          echo "Checking artifacts"
+          ls -la artifacts/x86 || true
+          ls -la artifacts/arm || true
+
+          X86_BIN=$(ls artifacts/x86/dist | grep clipwallet || true)
+          ARM_BIN=$(ls artifacts/arm/dist | grep clipwallet || true)
+
+          if [ -z "$X86_BIN" ] || [ -z "$ARM_BIN" ]; then
+            echo "One or both build artifacts are missing:"\
+                 "x86=[$X86_BIN] arm=[$ARM_BIN]"
+            exit 1
+          fi
+          echo "Both artifacts present: $X86_BIN, $ARM_BIN"
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        id: create_release
+        run: |
+          set -euo pipefail
+          TAG=${GITHUB_REF#refs/tags/}
+          API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases"
+          echo "Creating release for tag $TAG"
+          resp=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"tag_name\": \"$TAG\", \"name\": \"$TAG\", \"draft\": false, \"prerelease\": false}" \
+            "$API_URL")
+          upload_url=$(echo "$resp" | jq -r .upload_url | sed -e 's/{?name,label}//')
+          if [ -z "$upload_url" ] || [ "$upload_url" = "null" ]; then
+            echo "Failed to create release: $resp"
+            exit 1
+          fi
+          echo "UPLOAD_URL=$upload_url"
+          echo "upload_url=$upload_url" >> $GITHUB_OUTPUT
+
+      - name: Upload release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPLOAD_URL: ${{ steps.create_release.outputs.upload_url }}
+        run: |
+          set -euo pipefail
+          echo "Uploading assets to $UPLOAD_URL"
+          # Upload all files from both artifacts' dist directories
+          for f in artifacts/x86/dist/* artifacts/arm/dist/*; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f")
+            echo "Uploading $name"
+            curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f" "${UPLOAD_URL}?name=${name}" || { echo "Upload failed: $name"; exit 1; }
+          done

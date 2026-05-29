@@ -24,9 +24,17 @@ cargo build --release --target "$TARGET" 2>/dev/null \
 BINARY="target/${TARGET}/release/clipwallet"
 [ -f "$BINARY" ] || BINARY="target/release/clipwallet"
 
-# Sign
-codesign --sign - --force "$BINARY"
-echo "Binary signed ✓"
+# Sign (skip in CI by setting SKIP_CODESIGN=1)
+if [ "${SKIP_CODESIGN:-0}" != "1" ]; then
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --sign - --force "$BINARY"
+    echo "Binary signed ✓"
+  else
+    echo "codesign not available — skipping signing"
+  fi
+else
+  echo "SKIP_CODESIGN=1 — skipping codesign"
+fi
 
 # Package
 rm -rf "$DIST_DIR"
@@ -35,6 +43,13 @@ mkdir -p "$DIST_DIR/clipwallet"
 cp "$BINARY"    "$DIST_DIR/clipwallet/clipwallet"
 cp "install.sh" "$DIST_DIR/clipwallet/install.sh"
 chmod +x "$DIST_DIR/clipwallet/install.sh"
+
+# Also produce a standalone per-architecture binary asset for Releases
+# Named: clipwallet-<target> (e.g. clipwallet-aarch64-apple-darwin)
+ARCHIVE_BINARY_NAME="clipwallet-${TARGET}"
+cp "$BINARY" "$DIST_DIR/${ARCHIVE_BINARY_NAME}"
+chmod +x "$DIST_DIR/${ARCHIVE_BINARY_NAME}"
+echo "Per-arch binary ready: ${DIST_DIR}/${ARCHIVE_BINARY_NAME}"
 
 cat > "$DIST_DIR/clipwallet/README.txt" << EOF
 ClipWallet v${VERSION} — Persistent Clipboard Manager for macOS

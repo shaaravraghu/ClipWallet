@@ -18,12 +18,13 @@ pub fn next_id() -> EntryId {
 }
 
 pub struct RamStore {
-    pub static_slots:    [Option<ClipEntry>; STATIC_SLOTS],
-    pub dynamic_ring:    VecDeque<ClipEntry>,
-    pub dynamic_cursor:  usize,
+    pub static_slots:   [Option<ClipEntry>; STATIC_SLOTS],
+    pub static_cursor:  usize,
+    pub dynamic_ring:   VecDeque<ClipEntry>,
+    pub dynamic_cursor: usize,
 
     /// Tracks when the user last navigated — used by timeout task
-    pub last_nav_time:   Instant,
+    pub last_nav_time:  Instant,
 
     pub dirty: bool,
 }
@@ -32,6 +33,7 @@ impl RamStore {
     pub fn new() -> Self {
         Self {
             static_slots:  std::array::from_fn(|_| None),
+            static_cursor: 0,
             dynamic_ring:  VecDeque::with_capacity(MAX_DYNAMIC),
             dynamic_cursor: 0,
             last_nav_time: Instant::now(),
@@ -39,7 +41,7 @@ impl RamStore {
         }
     }
 
-    // ── Static ────────────────────────────────────────────────────────
+    // ── Static slots ──────────────────────────────────────────────────
 
     pub fn set_static(&mut self, slot: usize, entry: ClipEntry) {
         assert!(slot >= 1 && slot <= 9);
@@ -58,12 +60,70 @@ impl RamStore {
         self.dirty = true;
     }
 
+    // ── Static cursor navigation ──────────────────────────────────────
+
+    /// Move Tab cursor forward or backward, skipping empty slots.
+    /// Returns the 1-based slot number landed on, or None if all slots empty.
+    pub fn static_cursor_next(&mut self) -> Option<usize> {
+        self.static_move_cursor(1)
+    }
+
+    pub fn static_cursor_prev(&mut self) -> Option<usize> {
+        self.static_move_cursor(-1)
+    }
+
+    fn static_move_cursor(&mut self, direction: i32) -> Option<usize> {
+        let start = self.static_cursor;
+        let mut cur = self.static_cursor;
+        for _ in 0..STATIC_SLOTS {
+            let next = if direction > 0 {
+                (cur + 1) % STATIC_SLOTS
+            } else {
+                if cur == 0 { STATIC_SLOTS - 1 } else { cur - 1 }
+            };
+            cur = next;
+            if self.static_slots[cur].is_some() {
+                self.static_cursor = cur;
+                return Some(cur + 1);
+            }
+            if cur == start { break; }
+        }
+        None
+    }
+
+    /// Current cursor position as a 1-based slot number.
+    pub fn static_cursor_slot(&self) -> usize {
+        self.static_cursor + 1
+    }
+
+    /// Entry at the current cursor position.
+    pub fn static_cursor_entry(&self) -> Option<&ClipEntry> {
+        self.static_slots[self.static_cursor].as_ref()
+    }
+
+    /// Clear the slot at the current cursor position.
+    pub fn static_delete_at_cursor(&mut self) {
+        self.static_slots[self.static_cursor] = None;
+        self.dirty = true;
+    }
+
+    /// How many static slots are occupied.
+    pub fn static_occupied_count(&self) -> usize {
+        self.static_slots.iter().filter(|s| s.is_some()).count()
+    }
+
     // ── Dynamic ───────────────────────────────────────────────────────
 
     /// Push to front. Returns the evicted entry label if ring was full.
     pub fn push_dynamic(&mut self, entry: ClipEntry) -> Option<String> {
-        let mut evicted = None;
-        if self.dynamic_ring.len() >= MAX_DYNAMIC {
+        if let Some(latest) = self.dynamic_ring.front() {
+        if latest.data == entry.data {
+            return None;
+        }
+    }
+
+    let mut evicted = None;
+    if self.dynamic_ring.len() >= MAX_DYNAMIC {
             if let Some(old) = self.dynamic_ring.pop_back() {
                 evicted = Some(format!(
                     "id={} ({})",
