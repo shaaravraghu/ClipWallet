@@ -38,6 +38,7 @@ This project is part of **GirlScript Summer of Code (GSSoC) 2025**. We appreciat
 | 1 | Rahul Singh | [@rahulsingh289](https://github.com/rahulsingh289) | - | #1, #2 | - | 📖 🔧 | Improved README with beginner-friendly documentation, added .gitignore for build artifacts | May 2026 |
 | 2 | Riddhima | [@riddhima25bet10005-a11y](https://github.com/riddhima25bet10005-a11y) | #12, #10 | #15, #52 | - | 🐛 🧪 | Fixed hotkey timing race; added unit test coverage; Fixed NSString memory leak in pasteboard.rs | May 2026 |
 | 3 | Joshua Jacob Thomas | [@Jay-Jay-Tee](https://github.com/Jay-Jay-Tee) | #7, #8 | #35, #36 | - | 💻 🐛 | Fixed static slot persistence by routing all slot ops through RamStore; consolidated duplicate paste logic into write_and_paste helper | May 2026 |
+| 3 | Joshua Jacob Thomas | [@Jay-Jay-Tee](https://github.com/Jay-Jay-Tee) | #23 | #61 | - | 💻 🐛 | Added user-facing notifications for all empty-slot and empty-ring action paths that previously silently no-oped | May 2026 |
 | 4 | Chhavi Mishra | [@vibeetroot](https://github.com/vibeetroot) | #8 | #35 | - | 💻 | Refactored engine.rs to remove StaticSlotStore and route static slot operations through RamStore | May 2026 |
 
 ---
