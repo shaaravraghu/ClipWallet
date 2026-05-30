@@ -1,6 +1,6 @@
-name: "✨ Feature Request"
+name: "✨ Enhancement"
 description: Propose a new feature or enhancement for ClipWallet.
-title: "[Feature]: "
+title: "[Enhancement]: "
 labels: ["enhancement", "needs-triage"]
 assignees: []
 
