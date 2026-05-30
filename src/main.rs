@@ -45,7 +45,12 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Start the ClipWallet background service (foreground)
-    Run,
+    Run {
+        /// Override the dynamic-ring capacity (entries kept in RAM).
+        /// Defaults to the configured ring capacity (50).
+        #[arg(long, value_name = "ENTRIES")]
+        ring_capacity: Option<usize>,
+    },
 
     /// Install ClipWallet as a launchd login agent (auto-starts on login)
     Install,
@@ -124,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run => run_service().await?,
+        Commands::Run { ring_capacity } => run_service(ring_capacity).await?,
 
         // ── Install / Uninstall ───────────────────────────────────────────────
         Commands::Install => {
@@ -289,13 +294,19 @@ async fn main() -> anyhow::Result<()> {
 
 // ── Service Loop ──────────────────────────────────────────────────────────────
 
-async fn run_service() -> anyhow::Result<()> {
+async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()> {
     // ── Load mode from persistent config ─────────────────────────────────────
     let cfg         = config::load();
     let mode_static = cfg.mode == ClipMode::Static;
+
+    // ── Determine ring capacity ───────────────────────────────────────────────
+    let capacity = ring_capacity_override
+        .unwrap_or(cfg.ring_capacity)
+        .clamp(10, 500);
     info!(
-        "ClipWallet v0.1.0 starting in {} mode...",
-        if mode_static { "STATIC" } else { "DYNAMIC" }
+        "ClipWallet v0.1.0 starting in {} mode | ring capacity = {}...",
+        if mode_static { "STATIC" } else { "DYNAMIC" },
+        capacity
     );
 
     // ── Encryption + memory ON by default ────────────────────────────────────
@@ -308,7 +319,7 @@ async fn run_service() -> anyhow::Result<()> {
     }
 
     // ── Shared RAM store ──────────────────────────────────────────────────────
-    let ram = Arc::new(RwLock::new(RamStore::new()));
+    let ram = Arc::new(RwLock::new(RamStore::new(capacity)));
     {
         let mut w = ram.write().unwrap();
         disk::cleanup_tmp_files();
@@ -388,6 +399,8 @@ async fn run_service() -> anyhow::Result<()> {
     let _ = tokio::join!(engine_handle, flush_handle, cursor_handle);
     Ok(())
 }
+
+
 
 // ── Vault Key Rotation ────────────────────────────────────────────────────────
 

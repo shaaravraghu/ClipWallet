@@ -23,11 +23,20 @@ impl std::fmt::Display for ClipMode {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub mode: ClipMode,
+    #[serde(default = "default_ring_capacity")]
+    pub ring_capacity: usize,
+}
+
+fn default_ring_capacity() -> usize {
+    50
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { mode: ClipMode::Dynamic }
+        Self {
+            mode: ClipMode::Dynamic,
+            ring_capacity: 50,
+        }
     }
 }
 
@@ -40,15 +49,20 @@ fn config_path() -> PathBuf {
 
 pub fn load() -> Config {
     let path = config_path();
-    if !path.exists() {
+
+    let mut cfg = if !path.exists() {
         let cfg = Config::default();
         let _ = save(&cfg);
-        return cfg;
-    }
-    match fs::read_to_string(&path) {
-        Ok(s) => toml::from_str(&s).unwrap_or_else(|_| Config::default()),
-        Err(_) => Config::default(),
-    }
+        cfg
+    } else {
+        match fs::read_to_string(&path) {
+            Ok(s)  => toml::from_str(&s).unwrap_or_else(|_| Config::default()),
+            Err(_) => Config::default(),
+        }
+    };
+
+    cfg.ring_capacity = cfg.ring_capacity.clamp(10, 500);
+    cfg
 }
 
 pub fn save(cfg: &Config) -> anyhow::Result<()> {
