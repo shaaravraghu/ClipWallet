@@ -42,10 +42,13 @@ impl GrabberHandle {
 
 /// Spawn the event tap on its own OS thread and return a stoppable handle.
 /// Replaces the previous fire-and-forget `start_event_tap` call site.
+/// Spawn the event tap on its own OS thread and return a stoppable handle.
+/// Replaces the previous fire-and-forget `start_event_tap` call site.
 pub fn spawn_event_tap(
     tx: SyncSender<HotkeyAction>,
     mode_static: bool,
 ) -> GrabberHandle {
+    // 1. Change the channel to transmit the Send-safe RunLoopHandle wrapper
     let (loop_tx, loop_rx) = sync_channel::<RunLoopHandle>(1);
     let suppressed = Arc::new(AtomicBool::new(false));
     let suppressed_thread = suppressed.clone();
@@ -57,11 +60,13 @@ pub fn spawn_event_tap(
         })
         .expect("spawn grabber thread");
 
-    let run_loop = loop_rx
+    // 2. Receive the safe wrapper directly
+    let run_loop_handle = loop_rx
         .recv()
         .expect("grabber thread failed before publishing its run loop");
+
     GrabberHandle {
-        run_loop: Arc::new(RunLoopHandle(run_loop)),
+        run_loop: Arc::new(run_loop_handle),
         suppressed,
     }
 }
@@ -112,8 +117,9 @@ fn start_event_tap_inner(
 
     // Publish the run-loop ref to main BEFORE blocking. The handle is now
     // usable for shutdown.
+    // Publish the safe wrapper to main BEFORE blocking.
     let _ = loop_tx.send(RunLoopHandle(run_loop.as_concrete_TypeRef()));
-
+    
     info!("CGEventTap active — key interception running");
     CFRunLoop::run_current();
     info!("CGEventTap stopped");
