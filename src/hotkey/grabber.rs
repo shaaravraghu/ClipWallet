@@ -46,7 +46,7 @@ pub fn spawn_event_tap(
     tx: SyncSender<HotkeyAction>,
     mode_static: bool,
 ) -> GrabberHandle {
-    let (loop_tx, loop_rx) = sync_channel::<CFRunLoopRef>(1);
+    let (loop_tx, loop_rx) = sync_channel::<RunLoopHandle>(1);
     let suppressed = Arc::new(AtomicBool::new(false));
     let suppressed_thread = suppressed.clone();
 
@@ -112,7 +112,7 @@ fn start_event_tap_inner(
 
     // Publish the run-loop ref to main BEFORE blocking. The handle is now
     // usable for shutdown.
-    let _ = loop_tx.send(run_loop.as_concrete_TypeRef());
+    let _ = loop_tx.send(RunLoopHandle(run_loop.as_concrete_TypeRef()));
 
     info!("CGEventTap active — key interception running");
     CFRunLoop::run_current();
