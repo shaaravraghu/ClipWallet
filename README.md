@@ -923,6 +923,12 @@ Periodic flush failed: ...
 
 We welcome contributions! ClipWallet is part of **GirlScript Summer of Code (GSSoC) 2025**.
 
+> **New contributor?** Start here:
+> - [CONTRIBUTING.md](./CONTRIBUTING.md) — setup, branch naming, commit format, PR workflow
+> - [Issue Templates](./.githubISSUE_TEMPLATE/) — bug reports, feature requests, docs
+> - [PR Template](./githubpull_request_template.md) — what to fill in when opening a PR
+> - [Discord](https://discord.gg/X8Hr8P9J) —get help from maintainers
+
 ### How to Contribute
 
 1. **Fork** the repository

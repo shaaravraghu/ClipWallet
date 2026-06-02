@@ -1,0 +1,85 @@
+name: "📚 Documentation Improvement"
+description: Report missing, unclear, or incorrect documentation.
+title: "[Docs]: "
+labels: ["documentation", "good first issue"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Good documentation helps every contributor and user. Thanks for flagging something that could be better!
+
+  - type: dropdown
+    id: doc-location
+    attributes:
+      label: "Which document needs improvement?"
+      options:
+        - "README.md"
+        - "CONTRIBUTING.md"
+        - "MANUAL_INSTALLATION.md"
+        - "ROADMAP.md"
+        - "CHANGELOG.md"
+        - "SECURITY.md"
+        - "Code comments / inline docs (rustdoc)"
+        - "A new document that doesn't exist yet"
+        - "Other"
+    validations:
+      required: true
+
+  - type: input
+    id: section
+    attributes:
+      label: "Specific section or heading (if applicable)"
+      placeholder: "e.g. README → Quick Start, or src/engine.rs → handle_chord()"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: "What type of documentation issue is this?"
+      options:
+        - "Information is missing entirely"
+        - "Information is inaccurate or outdated"
+        - "Information is unclear or hard to follow"
+        - "Typo or grammatical error"
+        - "Broken link"
+        - "Code example doesn't work"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: "What does the current documentation say (or not say)?"
+      description: "Quote the relevant text, or describe the gap."
+      placeholder: "The Quick Start section says to run `clipwallet change mode` but doesn't explain what modes are available or what the difference is..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested
+    attributes:
+      label: "What should it say instead?"
+      description: "Describe or draft the improvement. Even rough notes help!"
+      placeholder: "Add a one-line explanation of Static vs Dynamic mode before the `change mode` step, with a link to the Modes section lower in the README..."
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: willing-to-contribute
+    attributes:
+      label: "Contribution"
+      options:
+        - label: "I'm willing to open a PR to fix this documentation."
+          required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Before submitting"
+      options:
+        - label: "I have checked that this issue is not already reported."
+          required: true
