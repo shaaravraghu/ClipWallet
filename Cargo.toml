@@ -57,6 +57,9 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 hex    = "0.4"
 
+# Integrity check on store envelope
+crc32fast = "1.4"
+
 # Phase 5 — rich data types
 infer  = "0.15"
 objc   = "0.2"
