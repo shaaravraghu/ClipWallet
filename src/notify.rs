@@ -63,6 +63,16 @@ pub fn notify_dynamic_delete(pos: usize) {
     notify("ClipWallet", &format!("Deleted ring[{}]", pos), "");
 }
 
+// ── Empty-position feedback ───────────────────────────────────────────────────
+
+pub fn notify_slot_empty(slot: usize) {
+    notify("ClipWallet", &format!("Slot {} is empty", slot), "");
+}
+
+pub fn notify_ring_empty() {
+    notify("ClipWallet", "Clipboard history is empty", "");
+}
+
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 pub fn notify_mode_changed(mode: &str) {
