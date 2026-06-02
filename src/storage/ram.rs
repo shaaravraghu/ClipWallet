@@ -8,6 +8,20 @@ pub const STATIC_SLOTS: usize = 9;
 /// Cursor timeout in seconds — resets to most recent after this idle period
 pub const CURSOR_TIMEOUT_SECS: u64 = 10;
 
+/// Periodic RAM -> Disk flush interval in seconds.
+///
+/// THIS IS THE ONLY PROTECTION AGAINST DATA LOSS FROM `SIGKILL`,
+/// `kill -9`, kernel panic, or hard power-off. Graceful shutdown
+/// (SIGINT/SIGTERM via ctrlc) triggers an immediate final flush, but
+/// that path is bypassed on SIGKILL.
+///
+/// Tradeoff: shorter intervals shrink the worst-case loss window
+/// at the cost of more disk IO. 15s balances both: users won't
+/// notice a 15s loss after a crash, and a MessagePack write every
+/// 15s is trivial. DON'T raise this without adding a stronger
+/// durability mechanism (e.g., a write-ahead log on every mutation).
+pub const FLUSH_INTERVAL_SECS: u64 = 15;
+
 static mut ID_COUNTER: EntryId = 0;
 
 pub fn next_id() -> EntryId {

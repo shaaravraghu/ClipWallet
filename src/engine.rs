@@ -226,7 +226,10 @@ impl Engine {
                 self.write_and_paste(&d);
                 notify::notify_static_paste(slot);
             }
-            None => warn!("[Static][PASTE] slot={} is NULL", slot),
+            None => {
+                warn!("[Static][PASTE] slot={} is NULL", slot);
+                notify::notify_slot_empty(slot);
+            }
         }
     }
 
@@ -248,7 +251,10 @@ impl Engine {
                     notify::notify_static_nav(slot, &preview);
                 }
             }
-            None => warn!("[Static][NAV] All slots NULL"),
+            None => {
+                warn!("[Static][NAV] All slots NULL");
+                notify::notify_ring_empty();
+            }
         }
     }
 
@@ -261,6 +267,7 @@ impl Engine {
             notify::notify_static_delete(slot);
         } else {
             warn!("[Static][DELETE] slot={} already NULL", slot);
+            notify::notify_slot_empty(slot);
         }
         self.log_static_state();
     }
@@ -318,7 +325,10 @@ impl Engine {
                 self.write_and_paste(&d);
                 notify::notify_dynamic_paste(cursor + 1, total);
             }
-            None => warn!("[Dynamic][PASTE] Ring is empty"),
+            None => {
+                warn!("[Dynamic][PASTE] Ring is empty");
+                notify::notify_ring_empty();
+            }
         }
     }
 
@@ -333,16 +343,28 @@ impl Engine {
                 (e.id, e.data.type_label(), ram.dynamic_cursor, ram.ring_len(), e.data.clone())
             })
         };
-        if let Some((id, type_label, cursor, total, d)) = data {
-            let preview = Self::short_preview(&d);
-            info!("[Dynamic][NAV] [{}/{}] id={} type={}", cursor+1, total, id, type_label);
-            self.sync_to_system_clipboard(&d);
-            self.log_ring_state();
-            notify::notify_dynamic_nav(cursor + 1, total, &preview);
+        match data {
+            Some((id, type_label, cursor, total, d)) => {
+                let preview = Self::short_preview(&d);
+                info!("[Dynamic][NAV] [{}/{}] id={} type={}", cursor+1, total, id, type_label);
+                self.sync_to_system_clipboard(&d);
+                self.log_ring_state();
+                notify::notify_dynamic_nav(cursor + 1, total, &preview);
+            }
+            None => {
+                warn!("[Dynamic][NAV] Ring is empty");
+                notify::notify_ring_empty();
+            }
         }
     }
 
     fn dynamic_delete(&mut self) {
+        let is_empty = self.ram.read().unwrap().current_dynamic().is_none();
+        if is_empty {
+            warn!("[Dynamic][DELETE] Ring is empty");
+            notify::notify_ring_empty();
+            return;
+        }
         let cursor = self.ram.read().unwrap().dynamic_cursor;
         let id     = self.ram.read().unwrap().current_dynamic().map(|e| e.id);
         self.ram.write().unwrap().delete_at_cursor();

@@ -42,7 +42,15 @@ pub fn install() -> anyhow::Result<()> {
     <dict>
         <key>SuccessfulExit</key>
         <false/>
+        <key>Crashed</key>           <!-- New: explicit respawn-on-crash -->
+        <true/>
     </dict>
+
+    <key>ProcessType</key>           <!-- New: signals this is a user-facing agent -->
+    <string>Interactive</string>
+
+    <key>ExitTimeOut</key>           <!-- New: launchd's SIGTERM→SIGKILL window -->
+    <integer>20</integer>            <!-- Must exceed the shutdown timeout in main.rs -->
 
     <key>ThrottleInterval</key>
     <integer>5</integer>

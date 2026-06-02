@@ -34,7 +34,16 @@ use crate::hotkey::chord::tier_active;
 use crate::hotkey::{ChordDetector, HotkeyAction, SYNTHETIC_TAG};
 use core_foundation::base::TCFType;
 use core_foundation::mach_port::CFMachPortRef;
-use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+//! macOS CGEventTap — intercepts and suppresses key events.
+//! Uses two complementary strategies to avoid the modifier-first-release race:
+//!   1. Uses detector's OWN modifier state (not live CGEventFlags) on KeyUp.
+//!   2. Also fires evaluate_release for any key still pending in
+//!      keys_pressed_in_chord even when was_active is false — covers the case
+//!      where Opt's FlagsChanged fires before C's KeyUp arrives.
+use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopRef, CFRunLoopStop};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::sync_channel;
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation,
     CGEventTapOptions, CGEventTapPlacement, CGEventType, EventField,
@@ -86,7 +95,64 @@ struct EventTapState {
     active: AtomicBool,
 }
 
-pub fn start_event_tap(tx: SyncSender<HotkeyAction>, mode_static: bool) {
+/// Owned by main; calling `.stop()` tears down the CGEventTap thread.
+#[derive(Clone)]
+pub struct GrabberHandle {
+    run_loop: Arc<RunLoopHandle>,
+    suppressed: Arc<AtomicBool>,
+}
+
+struct RunLoopHandle(CFRunLoopRef);
+// CFRunLoopStop is documented thread-safe on the run-loop ref.
+unsafe impl Send for RunLoopHandle {}
+unsafe impl Sync for RunLoopHandle {}
+
+impl GrabberHandle {
+    pub fn stop(&self) {
+        // Flip the flag FIRST so any callback already in flight returns
+        // without dispatching a HotkeyAction.
+        self.suppressed.store(true, Ordering::SeqCst);
+        unsafe { CFRunLoopStop(self.run_loop.0); }
+    }
+}
+
+/// Spawn the event tap on its own OS thread and return a stoppable handle.
+/// Replaces the previous fire-and-forget `start_event_tap` call site.
+/// Spawn the event tap on its own OS thread and return a stoppable handle.
+/// Replaces the previous fire-and-forget `start_event_tap` call site.
+pub fn spawn_event_tap(
+    tx: SyncSender<HotkeyAction>,
+    mode_static: bool,
+) -> GrabberHandle {
+    // 1. Change the channel to transmit the Send-safe RunLoopHandle wrapper
+    let (loop_tx, loop_rx) = sync_channel::<RunLoopHandle>(1);
+    let suppressed = Arc::new(AtomicBool::new(false));
+    let suppressed_thread = suppressed.clone();
+
+    std::thread::Builder::new()
+        .name("clipwallet-grabber".into())
+        .spawn(move || {
+            start_event_tap_inner(tx, mode_static, loop_tx, suppressed_thread);
+        })
+        .expect("spawn grabber thread");
+
+    // 2. Receive the safe wrapper directly
+    let run_loop_handle = loop_rx
+        .recv()
+        .expect("grabber thread failed before publishing its run loop");
+
+    GrabberHandle {
+        run_loop: Arc::new(run_loop_handle),
+        suppressed,
+    }
+}
+
+fn start_event_tap_inner(
+    tx: SyncSender<HotkeyAction>,
+    mode_static: bool,
+    loop_tx: std::sync::mpsc::SyncSender<CFRunLoopRef>,
+    suppressed: Arc<AtomicBool>,
+) {
     let state = Rc::new(EventTapState {
         detector:  RefCell::new(ChordDetector::new()),
         mod_state: Cell::new(CGEventFlags::empty()),
@@ -101,16 +167,16 @@ pub fn start_event_tap(tx: SyncSender<HotkeyAction>, mode_static: bool) {
 
     let state_cb    = Rc::clone(&state);
     let tap_port_cb = Rc::clone(&tap_port);
+    let detector      = RefCell::new(ChordDetector::new());
+    let ignore_next_c = RefCell::new(false);
+    let ignore_next_x = RefCell::new(false);
+    let suppressed_cb = suppressed.clone();
 
     let tap = CGEventTap::new(
         CGEventTapLocation::HID,
         CGEventTapPlacement::HeadInsertEventTap,
         CGEventTapOptions::Default,
-        vec![
-            CGEventType::KeyDown,
-            CGEventType::KeyUp,
-            CGEventType::FlagsChanged,
-        ],
+        vec![CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged],
         move |_proxy, event_type, event| {
             match event_type {
                 // ── Tap disabled: re-enable and re-sync BEFORE returning ──
@@ -124,6 +190,20 @@ pub fn start_event_tap(tx: SyncSender<HotkeyAction>, mode_static: bool) {
                 }
                 _ => handle_event(&state_cb, &tx, event_type, event, mode_static),
             }
+            // Shutdown gate: once main has called handle.stop(), let every
+            // event pass through unmodified instead of dispatching actions.
+            if suppressed_cb.load(Ordering::Relaxed) {
+                return Some(event.to_owned());
+            }
+            handle_event(
+                &mut detector.borrow_mut(),
+                &mut ignore_next_c.borrow_mut(),
+                &mut ignore_next_x.borrow_mut(),
+                &tx,
+                event_type,
+                event,
+                mode_static,
+            )
         },
     )
     .expect("CGEventTap creation failed — ensure Accessibility permission is granted");
@@ -140,8 +220,13 @@ pub fn start_event_tap(tx: SyncSender<HotkeyAction>, mode_static: bool) {
     run_loop.add_source(&loop_src, unsafe { kCFRunLoopCommonModes });
     tap.enable();
 
+    // Publish the run-loop ref to main BEFORE blocking. The handle is now
+    // usable for shutdown.
+    // Publish the safe wrapper to main BEFORE blocking.
+    let _ = loop_tx.send(RunLoopHandle(run_loop.as_concrete_TypeRef()));
     info!("CGEventTap active — two-tier key listener running (starts Idle)");
     CFRunLoop::run_current();
+    info!("CGEventTap stopped");
 }
 
 /// Strictly mask raw `CGEventFlags` down to the two qualifying chord modifiers.
