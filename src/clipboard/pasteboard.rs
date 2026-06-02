@@ -30,6 +30,26 @@ pub fn read_rtf() -> Option<Vec<u8>> {
     })
 }
 
+/// Extract plain text from RTF bytes using NSAttributedString.
+pub fn rtf_to_plain_text(bytes: &[u8]) -> Option<String> {
+    autoreleasepool(|| unsafe {
+        let data = nsdata(bytes);
+        let attr_str: *mut Object = msg_send![class!(NSAttributedString), alloc];
+        let attr_str: *mut Object = msg_send![
+            attr_str,
+            initWithRTF: data
+            documentAttributes: std::ptr::null_mut::<Object>()
+        ];
+        if attr_str.is_null() { return None; }
+        let _: *mut Object = msg_send![attr_str, autorelease];
+        let ns_str: *mut Object = msg_send![attr_str, string];
+        if ns_str.is_null() { return None; }
+        let cstr: *const i8 = msg_send![ns_str, UTF8String];
+        if cstr.is_null() { return None; }
+        Some(std::ffi::CStr::from_ptr(cstr).to_string_lossy().to_string())
+    })
+}
+
 /// Write RTF bytes to the system clipboard.
 pub fn write_rtf(bytes: &[u8]) -> bool {
     autoreleasepool(|| unsafe {

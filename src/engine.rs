@@ -39,9 +39,11 @@ impl Engine {
             HotkeyAction::DynamicCopy         => self.dynamic_copy(),
             HotkeyAction::DynamicCut          => self.dynamic_cut(),
             HotkeyAction::DynamicPaste        => self.dynamic_paste(),
+            HotkeyAction::DynamicPlainPaste   => self.dynamic_plain_paste(),
             HotkeyAction::DynamicNavigateNext => self.dynamic_nav(1),
             HotkeyAction::DynamicNavigatePrev => self.dynamic_nav(-1),
             HotkeyAction::DynamicDeleteCurrent=> self.dynamic_delete(),
+            HotkeyAction::StaticPlainPaste(s) => self.static_plain_paste(s),
             HotkeyAction::CursorReset         => self.cursor_reset(),
         }
     }
@@ -233,6 +235,35 @@ impl Engine {
         }
     }
 
+    fn static_plain_paste(&mut self, slot: usize) {
+        let data = self.ram.read().unwrap().get_static(slot).map(|e| e.data.clone());
+        match data {
+            Some(ClipData::RichText(ref bytes)) => {
+                info!("[Static][PLAIN PASTE] slot={} — stripping RTF", slot);
+                match pasteboard::rtf_to_plain_text(bytes) {
+                    Some(text) => {
+                        let plain = ClipData::PlainText(text);
+                        self.write_and_paste(&plain);
+                        notify::notify_static_plain_paste(slot);
+                    }
+                    None => {
+                        warn!("[Static][PLAIN PASTE] RTF strip failed for slot={}", slot);
+                        notify::notify_slot_empty(slot);
+                    }
+                }
+            }
+            Some(d) => {
+                info!("[Static][PLAIN PASTE] slot={} — not RTF, pasting as-is", slot);
+                self.write_and_paste(&d);
+                notify::notify_static_plain_paste(slot);
+            }
+            None => {
+                warn!("[Static][PLAIN PASTE] slot={} is NULL", slot);
+                notify::notify_slot_empty(slot);
+            }
+        }
+    }
+
     fn static_nav(&mut self, direction: i32) {
         let result = if direction > 0 {
             self.ram.write().unwrap().static_cursor_next()
@@ -327,6 +358,38 @@ impl Engine {
             }
             None => {
                 warn!("[Dynamic][PASTE] Ring is empty");
+                notify::notify_ring_empty();
+            }
+        }
+    }
+
+    fn dynamic_plain_paste(&mut self) {
+        let data = {
+            let ram = self.ram.read().unwrap();
+            ram.current_dynamic().map(|e| (e.id, e.data.clone(), ram.dynamic_cursor, ram.ring_len()))
+        };
+        match data {
+            Some((id, ClipData::RichText(ref bytes), cursor, total)) => {
+                info!("[Dynamic][PLAIN PASTE] ring[{}] id={} — stripping RTF", cursor, id);
+                match pasteboard::rtf_to_plain_text(bytes) {
+                    Some(text) => {
+                        let plain = ClipData::PlainText(text);
+                        self.write_and_paste(&plain);
+                        notify::notify_dynamic_plain_paste(cursor + 1, total);
+                    }
+                    None => {
+                        warn!("[Dynamic][PLAIN PASTE] RTF strip failed at ring[{}]", cursor);
+                        notify::notify_ring_empty();
+                    }
+                }
+            }
+            Some((_id, d, cursor, total)) => {
+                info!("[Dynamic][PLAIN PASTE] ring[{}] — not RTF, pasting as-is", cursor);
+                self.write_and_paste(&d);
+                notify::notify_dynamic_plain_paste(cursor + 1, total);
+            }
+            None => {
+                warn!("[Dynamic][PLAIN PASTE] Ring is empty");
                 notify::notify_ring_empty();
             }
         }

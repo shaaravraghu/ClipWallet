@@ -15,9 +15,13 @@ pub enum HotkeyAction {
     DynamicCopy,
     DynamicCut,
     DynamicPaste,
+    DynamicPlainPaste,
     DynamicNavigateNext,
     DynamicNavigatePrev,
     DynamicDeleteCurrent,
+
+    // Static mode — plain paste variant
+    StaticPlainPaste(usize),
 
     // Internal
     CursorReset,
@@ -193,6 +197,14 @@ impl ChordDetector {
                     self.last_digit.map(HotkeyAction::StaticPaste)
                 } else {
                     Some(HotkeyAction::DynamicPaste)
+                }
+            }
+
+            Key::KeyB => {
+                if mode_static {
+                    self.last_digit.map(HotkeyAction::StaticPlainPaste)
+                } else {
+                    Some(HotkeyAction::DynamicPlainPaste)
                 }
             }
 
