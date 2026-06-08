@@ -34,15 +34,8 @@ use crate::hotkey::chord::tier_active;
 use crate::hotkey::{ChordDetector, HotkeyAction, SYNTHETIC_TAG};
 use core_foundation::base::TCFType;
 use core_foundation::mach_port::CFMachPortRef;
-//! macOS CGEventTap — intercepts and suppresses key events.
-//! Uses two complementary strategies to avoid the modifier-first-release race:
-//!   1. Uses detector's OWN modifier state (not live CGEventFlags) on KeyUp.
-//!   2. Also fires evaluate_release for any key still pending in
-//!      keys_pressed_in_chord even when was_active is false — covers the case
-//!      where Opt's FlagsChanged fires before C's KeyUp arrives.
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopRef, CFRunLoopStop};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation,
@@ -116,8 +109,7 @@ impl GrabberHandle {
     }
 }
 
-/// Spawn the event tap on its own OS thread and return a stoppable handle.
-/// Replaces the previous fire-and-forget `start_event_tap` call site.
+
 /// Spawn the event tap on its own OS thread and return a stoppable handle.
 /// Replaces the previous fire-and-forget `start_event_tap` call site.
 pub fn spawn_event_tap(
@@ -167,17 +159,20 @@ fn start_event_tap_inner(
 
     let state_cb    = Rc::clone(&state);
     let tap_port_cb = Rc::clone(&tap_port);
-    let detector      = RefCell::new(ChordDetector::new());
-    let ignore_next_c = RefCell::new(false);
-    let ignore_next_x = RefCell::new(false);
     let suppressed_cb = suppressed.clone();
 
     let tap = CGEventTap::new(
         CGEventTapLocation::HID,
         CGEventTapPlacement::HeadInsertEventTap,
         CGEventTapOptions::Default,
-        vec![CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged],
+        vec![CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged],        
         move |_proxy, event_type, event| {
+            // Shutdown gate: once main has called handle.stop(), let every
+            // event pass through unmodified instead of dispatching actions.
+            if suppressed_cb.load(Ordering::Relaxed) {
+                return Some(event.to_owned());
+            }
+
             match event_type {
                 // ── Tap disabled: re-enable and re-sync BEFORE returning ──
                 CGEventType::TapDisabledByTimeout
@@ -190,21 +185,8 @@ fn start_event_tap_inner(
                 }
                 _ => handle_event(&state_cb, &tx, event_type, event, mode_static),
             }
-            // Shutdown gate: once main has called handle.stop(), let every
-            // event pass through unmodified instead of dispatching actions.
-            if suppressed_cb.load(Ordering::Relaxed) {
-                return Some(event.to_owned());
-            }
-            handle_event(
-                &mut detector.borrow_mut(),
-                &mut ignore_next_c.borrow_mut(),
-                &mut ignore_next_x.borrow_mut(),
-                &tx,
-                event_type,
-                event,
-                mode_static,
-            )
         },
+
     )
     .expect("CGEventTap creation failed — ensure Accessibility permission is granted");
 
