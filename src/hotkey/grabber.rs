@@ -1,23 +1,32 @@
 //! macOS CGEventTap — intercepts and suppresses key events.
-//! Uses two complementary strategies to avoid the modifier-first-release race:
-//!   1. Uses detector's OWN modifier state (not live CGEventFlags) on KeyUp.
-//!   2. Also fires evaluate_release for any key still pending in
-//!      keys_pressed_in_chord even when was_active is false — covers the case
-//!      where Opt's FlagsChanged fires before C's KeyUp arrives.
+//! Uses a two-tier check strategy:
+//!   1. Short-circuits any synthetic event marked with SYNTHETIC_TAG.
+//!   2. Intercepts user hotkeys and maps them to HotkeyActions.
 
-use crate::hotkey::{ChordDetector, HotkeyAction}; 
+use crate::hotkey::chord::tier_active;
+use crate::hotkey::{ChordDetector, HotkeyAction, SYNTHETIC_TAG};
 use core_foundation::base::TCFType;
+use core_foundation::mach_port::CFMachPortRef;
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopRef, CFRunLoopStop};
+use std::cell::Cell;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
+use std::sync::mpsc::SyncSender;
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation,
     CGEventTapOptions, CGEventTapPlacement, CGEventType, EventField,
 };
-use std::cell::RefCell;
-use std::sync::mpsc::SyncSender;
-use tracing::{debug, info};
+use core_graphics::event_source::CGEventSourceStateID;
+use tracing::{debug, info, warn};
+
+extern "C" {
+    /// Enable / disable an event tap by its mach port. Needed to re-arm the tap
+    /// from inside its own callback.
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+}
 
 /// Owned by main; calling `.stop()` tears down the CGEventTap thread.
 #[derive(Clone)]
@@ -27,28 +36,21 @@ pub struct GrabberHandle {
 }
 
 struct RunLoopHandle(CFRunLoopRef);
-// CFRunLoopStop is documented thread-safe on the run-loop ref.
 unsafe impl Send for RunLoopHandle {}
 unsafe impl Sync for RunLoopHandle {}
 
 impl GrabberHandle {
     pub fn stop(&self) {
-        // Flip the flag FIRST so any callback already in flight returns
-        // without dispatching a HotkeyAction.
         self.suppressed.store(true, Ordering::SeqCst);
         unsafe { CFRunLoopStop(self.run_loop.0); }
     }
 }
 
 /// Spawn the event tap on its own OS thread and return a stoppable handle.
-/// Replaces the previous fire-and-forget `start_event_tap` call site.
-/// Spawn the event tap on its own OS thread and return a stoppable handle.
-/// Replaces the previous fire-and-forget `start_event_tap` call site.
 pub fn spawn_event_tap(
     tx: SyncSender<HotkeyAction>,
     mode_static: bool,
 ) -> GrabberHandle {
-    // 1. Change the channel to transmit the Send-safe RunLoopHandle wrapper
     let (loop_tx, loop_rx) = sync_channel::<RunLoopHandle>(1);
     let suppressed = Arc::new(AtomicBool::new(false));
     let suppressed_thread = suppressed.clone();
@@ -60,7 +62,6 @@ pub fn spawn_event_tap(
         })
         .expect("spawn grabber thread");
 
-    // 2. Receive the safe wrapper directly
     let run_loop_handle = loop_rx
         .recv()
         .expect("grabber thread failed before publishing its run loop");
@@ -77,10 +78,11 @@ fn start_event_tap_inner(
     loop_tx: std::sync::mpsc::SyncSender<CFRunLoopRef>,
     suppressed: Arc<AtomicBool>,
 ) {
-    let detector      = RefCell::new(ChordDetector::new());
-    let ignore_next_c = RefCell::new(false);
-    let ignore_next_x = RefCell::new(false);
+    let detector = RefCell::new(ChordDetector::new());
     let suppressed_cb = suppressed.clone();
+
+    let tap_port: Rc<Cell<Option<CFMachPortRef>>> = Rc::new(Cell::new(None));
+    let tap_port_cb = Rc::clone(&tap_port);
 
     let tap = CGEventTap::new(
         CGEventTapLocation::HID,
@@ -88,23 +90,32 @@ fn start_event_tap_inner(
         CGEventTapOptions::Default,
         vec![CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged],
         move |_proxy, event_type, event| {
-            // Shutdown gate: once main has called handle.stop(), let every
-            // event pass through unmodified instead of dispatching actions.
             if suppressed_cb.load(Ordering::Relaxed) {
                 return Some(event.to_owned());
             }
-            handle_event(
-                &mut detector.borrow_mut(),
-                &mut ignore_next_c.borrow_mut(),
-                &mut ignore_next_x.borrow_mut(),
-                &tx,
-                event_type,
-                event,
-                mode_static,
-            )
+
+            match event_type {
+                CGEventType::TapDisabledByTimeout
+                | CGEventType::TapDisabledByUserInput => {
+                    if let Some(port) = tap_port_cb.get() {
+                        unsafe { CGEventTapEnable(port, true); }
+                    }
+                    warn!("Event tap re-enabled after timeout or user disable.");
+                    None
+                }
+                _ => handle_event(
+                    &mut detector.borrow_mut(),
+                    &tx,
+                    event_type,
+                    event,
+                    mode_static,
+                ),
+            }
         },
     )
     .expect("CGEventTap creation failed — ensure Accessibility permission is granted");
+
+    tap_port.set(Some(tap.mach_port.as_concrete_TypeRef()));
 
     let loop_src = tap
         .mach_port
@@ -115,9 +126,6 @@ fn start_event_tap_inner(
     run_loop.add_source(&loop_src, unsafe { kCFRunLoopCommonModes });
     tap.enable();
 
-    // Publish the run-loop ref to main BEFORE blocking. The handle is now
-    // usable for shutdown.
-    // Publish the safe wrapper to main BEFORE blocking.
     let _ = loop_tx.send(RunLoopHandle(run_loop.as_concrete_TypeRef()));
     
     info!("CGEventTap active — key interception running");
@@ -126,30 +134,30 @@ fn start_event_tap_inner(
 }
 
 fn handle_event(
-    detector:      &mut ChordDetector,
-    ignore_next_c: &mut bool,
-    ignore_next_x: &mut bool,
-    tx:            &SyncSender<HotkeyAction>,
-    event_type:    CGEventType,
-    event:         &CGEvent,
-    mode_static:   bool,
+    detector:    &mut ChordDetector,
+    tx:          &SyncSender<HotkeyAction>,
+    event_type:  CGEventType,
+    event:       &CGEvent,
+    mode_static: bool,
 ) -> Option<CGEvent> {
+    // Synthetic-event short-circuit:
+    // If it carries the SYNTHETIC_TAG user data, let it pass through immediately.
+    if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == SYNTHETIC_TAG {
+        return Some(event.to_owned());
+    }
+
     let flags = event.get_flags();
     let cmd   = flags.contains(CGEventFlags::CGEventFlagCommand);
     let opt   = flags.contains(CGEventFlags::CGEventFlagAlternate);
 
     match event_type {
-
-        // ── FlagsChanged: modifier press / release ────────────────────
         CGEventType::FlagsChanged => {
             sync_modifiers(detector, flags);
             debug!("Modifiers → cmd={} opt={}", cmd, opt);
             Some(event.to_owned())
         }
 
-        // ── KeyDown ───────────────────────────────────────────────────
         CGEventType::KeyDown => {
-            // Filter autorepeat
             let is_repeat = event
                 .get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT)
                 == 1;
@@ -165,45 +173,20 @@ fn handle_event(
                 None    => return Some(event.to_owned()),
             };
 
-            // Injection passthrough guard
-            if key == rdev::Key::KeyC && *ignore_next_c {
-                *ignore_next_c = false;
-                debug!("Passing injected Cmd+C through");
-                return Some(event.to_owned());
-            }
-            if key == rdev::Key::KeyX && *ignore_next_x {
-                *ignore_next_x = false;
-                debug!("Passing injected Cmd+X through");
-                return Some(event.to_owned());
-            }
-
-            // Update detector held set FIRST so digit actions see C/X/V
             detector.key_down(key.clone());
             debug!("KeyDown {:?}  cmd={} opt={}", key, cmd, opt);
 
             if detector.cmd() && detector.opt() {
-                // Set injection guard before firing so injected key passes through
-                if key == rdev::Key::KeyC { *ignore_next_c = true; }
-                if key == rdev::Key::KeyX { *ignore_next_x = true; }
-
                 if let Some(action) = detector.evaluate_press(&key, mode_static) {
                     debug!("Action (press): {:?}", action);
                     let _ = tx.send(action);
                 }
-                return None; // suppress
+                return None; // suppress user chord keydown
             }
 
             Some(event.to_owned())
         }
 
-        // ── KeyUp ─────────────────────────────────────────────────────
-        // IMPORTANT: Use detector's OWN modifier state, not live flags.
-        // Live flags can already show Opt=false by the time C KeyUp fires.
-        // Additionally, even if was_active is false because a modifier
-        // already fired a FlagsChanged event, we must still call
-        // evaluate_release for any key that was pressed inside the chord
-        // (tracked in keys_pressed_in_chord).  This closes the race where
-        // Opt's FlagsChanged clears the detector before C's KeyUp arrives.
         CGEventType::KeyUp => {
             let keycode = event
                 .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
@@ -213,32 +196,24 @@ fn handle_event(
                 None    => return Some(event.to_owned()),
             };
 
-            // was_active: both modifiers still held in detector at KeyUp time.
             let was_active = detector.cmd() && detector.opt();
-            // pending: key was pressed while chord was active (may survive
-            // modifier release via keys_pressed_in_chord).
             let is_pending = detector.is_pending_chord_key(&key);
             debug!("KeyUp {:?}  detector_active={}  pending={}", key, was_active, is_pending);
 
-            // Fire evaluate_release if the chord was active OR if this key
-            // was registered in the chord (handles modifier-first-release race).
             if was_active || is_pending {
                 if let Some(action) = detector.evaluate_release(&key, mode_static) {
                     debug!("Action (release): {:?}", action);
                     let _ = tx.send(action);
                     detector.key_up(key);
-                    return None; // suppress the raw key event
+                    return None; // suppress user chord keyup
                 }
             }
 
             detector.key_up(key);
 
-            // Suppress raw event only if chord was active (not for pending-only case
-            // where modifiers were already fully released before this KeyUp).
             if was_active { return None; }
             Some(event.to_owned())
         }
-
 
         _ => Some(event.to_owned()),
     }
