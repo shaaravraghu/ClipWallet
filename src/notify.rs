@@ -55,6 +55,14 @@ pub fn notify_dynamic_paste(pos: usize, total: usize) {
     notify("ClipWallet", &format!("Paste ready  [{}/{}]", pos, total), "Press Cmd+V");
 }
 
+pub fn notify_static_plain_paste(slot: usize) {
+    notify("ClipWallet", &format!("Plain paste from Slot {}", slot), "Formatting stripped");
+}
+
+pub fn notify_dynamic_plain_paste(pos: usize, total: usize) {
+    notify("ClipWallet", &format!("Plain paste  [{}/{}]", pos, total), "Formatting stripped");
+}
+
 pub fn notify_dynamic_nav(pos: usize, total: usize, preview: &str) {
     notify("ClipWallet", &format!("Tab  [{}/{}]  Cmd+V ready", pos, total), preview);
 }
