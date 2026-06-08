@@ -226,6 +226,37 @@ impl ChordDetector {
     pub fn is_pending_chord_key(&self, key: &Key) -> bool {
         self.keys_pressed_in_chord.contains(key)
     }
+
+    /// Reset the detector to a clean Idle state, dropping all held keys, any
+    /// pending chord keys, the addressed digit, and the Tab latch.
+    ///
+    /// Ownership (issue #27, review pt 5): this is deliberately `pub(crate)` and
+    /// must be called ONLY by the grabber thread (the event-tap callback), and
+    /// only where the detector's view of the keyboard is known to be stale —
+    /// currently the single point after the tap is re-enabled following a
+    /// `kCGEventTapDisabledByTimeout`, where KeyUp/FlagsChanged events may have
+    /// been missed while the tap was off. Making it fully `pub` would let
+    /// unrelated paths (a future CLI command, a watchdog, a test harness) clear
+    /// chord state mid-operation and silently drop a copy/cut/paste.
+    pub(crate) fn reset(&mut self) {
+        self.held.clear();
+        self.tab_consumed = false;
+        self.last_digit = None;
+        self.keys_pressed_in_chord.clear();
+    }
+}
+
+/// Tier gate rule (issue #27, review pt 1).
+///
+/// Tier 2 (the full chord evaluator) is engaged whenever AT LEAST ONE
+/// qualifying modifier — Command or Option — is held, and falls back to tier 1
+/// (the lightweight idle listener) ONLY when BOTH are absent. The gate is
+/// derived from the complete modifier state, never from whichever single
+/// modifier a given FlagsChanged toggled. That is what keeps a KeyDown arriving
+/// between two separate modifier-release events from being evaluated against a
+/// half-released chord and silently dropped in Idle.
+pub(crate) fn tier_active(cmd_held: bool, opt_held: bool) -> bool {
+    cmd_held || opt_held
 }
 
 fn key_to_digit(key: &Key) -> Option<usize> {
@@ -354,5 +385,42 @@ mod tests {
 
         // digit should now be cleared — a new chord must supply a fresh digit
         assert!(!detector.is_pending_chord_key(&Key::KeyC));
+    }
+
+    // ── Tier gate rule (issue #27, review pt 1) ──────────────────────────────
+
+    #[test]
+    fn tier_stays_active_until_both_modifiers_released() {
+        // Cmd+Opt held → Active.
+        assert!(tier_active(true, true));
+        // Opt released first, Cmd still held → MUST remain Active so a KeyDown
+        // in the gap is not dropped.
+        assert!(tier_active(true, false));
+        // Cmd released first, Opt still held → still Active.
+        assert!(tier_active(false, true));
+        // Both released → Idle.
+        assert!(!tier_active(false, false));
+    }
+
+    // ── reset() ownership/behavior (issue #27, review pt 5) ──────────────────
+
+    #[test]
+    fn reset_clears_all_chord_state() {
+        let mut detector = ChordDetector::new();
+
+        detector.key_down(Key::MetaLeft);
+        detector.key_down(Key::Alt);
+        detector.key_down(Key::Num4);
+        detector.key_down(Key::KeyC);
+        assert!(detector.cmd() && detector.opt());
+        assert!(detector.is_pending_chord_key(&Key::KeyC));
+
+        detector.reset();
+
+        assert!(!detector.cmd());
+        assert!(!detector.opt());
+        assert!(!detector.is_pending_chord_key(&Key::KeyC));
+        // The stale digit must be gone: a fresh C release with no new digit is a no-op.
+        assert_eq!(detector.evaluate_release(&Key::KeyC, true), None);
     }
 }
