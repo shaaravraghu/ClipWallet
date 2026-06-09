@@ -134,7 +134,9 @@ pub fn write_file_paths(paths: &[PathBuf]) -> bool {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Create an NSString from a Rust &str
+/// Create an NSString from a Rust &str.
+/// The returned object is autoreleased to prevent memory leaks when interacting
+/// with NSPasteboard (fixes #48).
 unsafe fn nsstring(s: &str) -> *mut Object {
     let cls = class!(NSString);
     let bytes = s.as_ptr() as *const std::os::raw::c_void;

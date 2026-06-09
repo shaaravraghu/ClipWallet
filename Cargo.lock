@@ -532,6 +532,7 @@ dependencies = [
  "clap",
  "core-foundation 0.9.4",
  "core-graphics 0.23.2",
+ "crc32fast",
  "ctrlc",
  "dirs",
  "hex",
