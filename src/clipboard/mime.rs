@@ -6,7 +6,7 @@ use crate::clipboard::types::ClipData;
 #[derive(Debug, Clone, PartialEq)]
 pub enum DetectedType {
     PlainText,
-    RichText,    // RTF
+    RichText, // RTF
     ImagePng,
     ImageJpeg,
     ImageOther,
@@ -19,7 +19,7 @@ pub fn detect_bytes(bytes: &[u8]) -> DetectedType {
     // Try infer crate first (magic byte detection)
     if let Some(kind) = infer::get(bytes) {
         match kind.mime_type() {
-            "image/png"  => return DetectedType::ImagePng,
+            "image/png" => return DetectedType::ImagePng,
             "image/jpeg" => return DetectedType::ImageJpeg,
             m if m.starts_with("image/") => return DetectedType::ImageOther,
             _ => {}

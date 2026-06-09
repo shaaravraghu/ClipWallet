@@ -12,7 +12,7 @@ use tracing::{info, warn};
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const KEYCHAIN_SERVICE: &str = "com.clipwallet.vault";
-const KEYCHAIN_USER:    &str = "clipwallet-key";
+const KEYCHAIN_USER: &str = "clipwallet-key";
 
 /// Nonce is 12 bytes for AES-256-GCM
 const NONCE_LEN: usize = 12;
@@ -40,15 +40,17 @@ pub fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
     match entry.get_password() {
         Ok(hex) => {
             // Decode key from hex string
-            let bytes = hex::decode(&hex).map_err(|e| {
-                anyhow::anyhow!("Keychain key failed to decode: {}", e)
-            })?;
-            
+            let bytes = hex::decode(&hex)
+                .map_err(|e| anyhow::anyhow!("Keychain key failed to decode: {}", e))?;
+
             // Check key length
             if bytes.len() != 32 {
-                anyhow::bail!("Keychain key wrong length: expected 32 bytes, got {}", bytes.len());
+                anyhow::bail!(
+                    "Keychain key wrong length: expected 32 bytes, got {}",
+                    bytes.len()
+                );
             }
-            
+
             let mut key = [0u8; 32];
             key.copy_from_slice(&bytes);
             info!("Encryption key loaded from Keychain");
@@ -65,7 +67,7 @@ pub fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
 pub fn delete_key() -> anyhow::Result<()> {
     let entry = Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER)?;
     match entry.delete_password() {
-        Ok(_)  => info!("Encryption key removed from Keychain"),
+        Ok(_) => info!("Encryption key removed from Keychain"),
         Err(_) => info!("No Keychain key found — skipping"),
     }
     Ok(())
@@ -86,9 +88,9 @@ pub fn vault_dir() -> PathBuf {
 /// Format: [ nonce (12 bytes) | ciphertext ]
 pub fn encrypt_entry(entry: &ClipEntry) -> anyhow::Result<Vec<u8>> {
     let raw_key = get_or_create_key()?;
-    let key     = Key::<Aes256Gcm>::from_slice(&raw_key);
-    let cipher  = Aes256Gcm::new(key);
-    let nonce   = Aes256Gcm::generate_nonce(&mut OsRng);
+    let key = Key::<Aes256Gcm>::from_slice(&raw_key);
+    let cipher = Aes256Gcm::new(key);
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
     // Serialise the entry to MessagePack first
     let plaintext = rmp_serde::to_vec(entry)?;
@@ -113,8 +115,8 @@ pub fn decrypt_entry(bytes: &[u8]) -> anyhow::Result<ClipEntry> {
     }
 
     let raw_key = get_or_create_key()?;
-    let key     = Key::<Aes256Gcm>::from_slice(&raw_key);
-    let cipher  = Aes256Gcm::new(key);
+    let key = Key::<Aes256Gcm>::from_slice(&raw_key);
+    let cipher = Aes256Gcm::new(key);
 
     let (nonce_bytes, ciphertext) = bytes.split_at(NONCE_LEN);
     let nonce = Nonce::from_slice(nonce_bytes);
@@ -160,7 +162,9 @@ pub fn load_from_vault(id: u64) -> anyhow::Result<ClipEntry> {
 /// List all entry IDs currently in the vault
 pub fn list_vault_ids() -> Vec<u64> {
     let dir = vault_dir();
-    if !dir.exists() { return vec![]; }
+    if !dir.exists() {
+        return vec![];
+    }
 
     fs::read_dir(&dir)
         .map(|entries| {

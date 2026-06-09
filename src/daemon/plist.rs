@@ -68,9 +68,9 @@ pub fn install() -> anyhow::Result<()> {
     </dict>
 </dict>
 </plist>"#,
-        label  = PLIST_LABEL,
+        label = PLIST_LABEL,
         binary = INSTALL_PATH,
-        home   = home.to_string_lossy(),
+        home = home.to_string_lossy(),
     );
 
     let path = plist_path();

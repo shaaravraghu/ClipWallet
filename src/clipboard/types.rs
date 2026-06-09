@@ -9,7 +9,11 @@ pub enum ClipData {
     PlainText(String),
     RichText(Vec<u8>),
     /// PNG bytes + original dimensions for arboard reconstruction
-    Image { bytes: Vec<u8>, width: usize, height: usize },
+    Image {
+        bytes: Vec<u8>,
+        width: usize,
+        height: usize,
+    },
     /// Pointer-style: path only, file bytes never loaded
     FilePath(Vec<PathBuf>),
     Binary(Vec<u8>),
@@ -18,34 +22,32 @@ pub enum ClipData {
 impl ClipData {
     pub fn type_label(&self) -> &'static str {
         match self {
-            ClipData::PlainText(_)          => "PlainText",
-            ClipData::RichText(_)           => "RichText",
-            ClipData::Image { .. }          => "Image",
-            ClipData::FilePath(_)           => "FilePath",
-            ClipData::Binary(_)             => "Binary",
+            ClipData::PlainText(_) => "PlainText",
+            ClipData::RichText(_) => "RichText",
+            ClipData::Image { .. } => "Image",
+            ClipData::FilePath(_) => "FilePath",
+            ClipData::Binary(_) => "Binary",
         }
     }
 
     pub fn size_bytes(&self) -> usize {
         match self {
-            ClipData::PlainText(s)          => s.len(),
-            ClipData::RichText(b)           => b.len(),
-            ClipData::Image { bytes, .. }   => bytes.len(),
-            ClipData::Binary(b)             => b.len(),
-            ClipData::FilePath(paths)       => {
-                paths.iter().map(|p| p.to_string_lossy().len()).sum()
-            }
+            ClipData::PlainText(s) => s.len(),
+            ClipData::RichText(b) => b.len(),
+            ClipData::Image { bytes, .. } => bytes.len(),
+            ClipData::Binary(b) => b.len(),
+            ClipData::FilePath(paths) => paths.iter().map(|p| p.to_string_lossy().len()).sum(),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipEntry {
-    pub id:        EntryId,
+    pub id: EntryId,
     pub timestamp: DateTime<Utc>,
-    pub data:      ClipData,
+    pub data: ClipData,
     pub encrypted: bool,
-    pub label:     Option<String>,
+    pub label: Option<String>,
 }
 
 impl ClipEntry {

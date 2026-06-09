@@ -9,9 +9,7 @@ pub fn print_full_status() {
     println!("── ClipWallet Status ────────────────────────────");
 
     // ── Process ───────────────────────────────────────────────────────
-    let output = Command::new("pgrep")
-        .args(["-x", "clipwallet"])
-        .output();
+    let output = Command::new("pgrep").args(["-x", "clipwallet"]).output();
 
     match output {
         Ok(o) if !o.stdout.is_empty() => {
@@ -27,7 +25,11 @@ pub fn print_full_status() {
         .join("Library/LaunchAgents/com.clipwallet.agent.plist");
     println!(
         "  launchd   : {}",
-        if plist.exists() { "Registered ✓" } else { "Not registered" }
+        if plist.exists() {
+            "Registered ✓"
+        } else {
+            "Not registered"
+        }
     );
 
     // ── Store stats ───────────────────────────────────────────────────

@@ -13,7 +13,10 @@ pub fn notify(title: &str, subtitle: &str, body: &str) {
     let script = if s.is_empty() {
         format!(r#"display notification "{}" with title "{}""#, b, t)
     } else {
-        format!(r#"display notification "{}" with title "{}" subtitle "{}""#, b, t, s)
+        format!(
+            r#"display notification "{}" with title "{}" subtitle "{}""#,
+            b, t, s
+        )
     };
 
     let _ = Command::new("osascript").args(["-e", &script]).spawn();
@@ -34,7 +37,11 @@ pub fn notify_static_paste(slot: usize) {
 }
 
 pub fn notify_static_nav(slot: usize, preview: &str) {
-    notify("ClipWallet", &format!("Tab → Slot {}  (Cmd+V ready)", slot), preview);
+    notify(
+        "ClipWallet",
+        &format!("Tab → Slot {}  (Cmd+V ready)", slot),
+        preview,
+    );
 }
 
 pub fn notify_static_delete(slot: usize) {
@@ -44,7 +51,11 @@ pub fn notify_static_delete(slot: usize) {
 // ── Dynamic mode ──────────────────────────────────────────────────────────────
 
 pub fn notify_dynamic_copy(pos: usize, total: usize, preview: &str) {
-    notify("ClipWallet", &format!("Copied  [{}/{}]", pos, total), preview);
+    notify(
+        "ClipWallet",
+        &format!("Copied  [{}/{}]", pos, total),
+        preview,
+    );
 }
 
 pub fn notify_dynamic_cut(pos: usize, total: usize, preview: &str) {
@@ -52,19 +63,35 @@ pub fn notify_dynamic_cut(pos: usize, total: usize, preview: &str) {
 }
 
 pub fn notify_dynamic_paste(pos: usize, total: usize) {
-    notify("ClipWallet", &format!("Paste ready  [{}/{}]", pos, total), "Press Cmd+V");
+    notify(
+        "ClipWallet",
+        &format!("Paste ready  [{}/{}]", pos, total),
+        "Press Cmd+V",
+    );
 }
 
 pub fn notify_static_plain_paste(slot: usize) {
-    notify("ClipWallet", &format!("Plain paste from Slot {}", slot), "Formatting stripped");
+    notify(
+        "ClipWallet",
+        &format!("Plain paste from Slot {}", slot),
+        "Formatting stripped",
+    );
 }
 
 pub fn notify_dynamic_plain_paste(pos: usize, total: usize) {
-    notify("ClipWallet", &format!("Plain paste  [{}/{}]", pos, total), "Formatting stripped");
+    notify(
+        "ClipWallet",
+        &format!("Plain paste  [{}/{}]", pos, total),
+        "Formatting stripped",
+    );
 }
 
 pub fn notify_dynamic_nav(pos: usize, total: usize, preview: &str) {
-    notify("ClipWallet", &format!("Tab  [{}/{}]  Cmd+V ready", pos, total), preview);
+    notify(
+        "ClipWallet",
+        &format!("Tab  [{}/{}]  Cmd+V ready", pos, total),
+        preview,
+    );
 }
 
 pub fn notify_dynamic_delete(pos: usize) {
@@ -84,13 +111,25 @@ pub fn notify_ring_empty() {
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 pub fn notify_mode_changed(mode: &str) {
-    notify("ClipWallet", "Mode changed", &format!("Now in {} mode — restart to apply", mode));
+    notify(
+        "ClipWallet",
+        "Mode changed",
+        &format!("Now in {} mode — restart to apply", mode),
+    );
 }
 
 pub fn notify_memory_cleared() {
-    notify("ClipWallet", "Memory cleared", "All clipboard history erased");
+    notify(
+        "ClipWallet",
+        "Memory cleared",
+        "All clipboard history erased",
+    );
 }
 
 pub fn notify_encryption_removed() {
-    notify("ClipWallet", "Encryption removed", "Vault data deleted, Keychain key removed");
+    notify(
+        "ClipWallet",
+        "Encryption removed",
+        "Vault data deleted, Keychain key removed",
+    );
 }

@@ -9,9 +9,9 @@ use objc::runtime::Object;
 use objc::{class, msg_send, sel, sel_impl};
 
 // NSPasteboard type strings
-const NS_RTF_PBOARD_TYPE:        &str = "public.rtf";
-const NS_FILE_URL_PBOARD_TYPE:   &str = "public.file-url";
-const NS_STRING_PBOARD_TYPE:     &str = "public.utf8-plain-text";
+const NS_RTF_PBOARD_TYPE: &str = "public.rtf";
+const NS_FILE_URL_PBOARD_TYPE: &str = "public.file-url";
+const NS_STRING_PBOARD_TYPE: &str = "public.utf8-plain-text";
 
 /// Read RTF bytes from the system clipboard if present.
 /// Returns None if no RTF data is available.
@@ -20,11 +20,15 @@ pub fn read_rtf() -> Option<Vec<u8>> {
         let pb: *mut Object = msg_send![class!(NSPasteboard), generalPasteboard];
         let ns_type = nsstring(NS_RTF_PBOARD_TYPE);
         let data: *mut Object = msg_send![pb, dataForType: ns_type];
-        if data.is_null() { return None; }
+        if data.is_null() {
+            return None;
+        }
 
         let len: usize = msg_send![data, length];
         let ptr: *const u8 = msg_send![data, bytes];
-        if ptr.is_null() || len == 0 { return None; }
+        if ptr.is_null() || len == 0 {
+            return None;
+        }
 
         Some(std::slice::from_raw_parts(ptr, len).to_vec())
     })
@@ -40,12 +44,18 @@ pub fn rtf_to_plain_text(bytes: &[u8]) -> Option<String> {
             initWithRTF: data
             documentAttributes: std::ptr::null_mut::<Object>()
         ];
-        if attr_str.is_null() { return None; }
+        if attr_str.is_null() {
+            return None;
+        }
         let _: *mut Object = msg_send![attr_str, autorelease];
         let ns_str: *mut Object = msg_send![attr_str, string];
-        if ns_str.is_null() { return None; }
+        if ns_str.is_null() {
+            return None;
+        }
         let cstr: *const i8 = msg_send![ns_str, UTF8String];
-        if cstr.is_null() { return None; }
+        if cstr.is_null() {
+            return None;
+        }
         Some(std::ffi::CStr::from_ptr(cstr).to_string_lossy().to_string())
     })
 }
@@ -76,37 +86,44 @@ pub fn read_file_paths() -> Option<Vec<PathBuf>> {
             class!(NSArray),
             arrayWithObject: class!(NSURL)
         ];
-        let options: *mut Object = msg_send![
-            class!(NSDictionary),
-            dictionary
-        ];
+        let options: *mut Object = msg_send![class!(NSDictionary), dictionary];
         let urls: *mut Object = msg_send![
             pb,
             readObjectsForClasses: classes
             options: options
         ];
 
-        if urls.is_null() { return None; }
+        if urls.is_null() {
+            return None;
+        }
         let count: usize = msg_send![urls, count];
-        if count == 0 { return None; }
+        if count == 0 {
+            return None;
+        }
 
         let mut paths = Vec::with_capacity(count);
         for i in 0..count {
             let url: *mut Object = msg_send![urls, objectAtIndex: i];
             let is_file: bool = msg_send![url, isFileURL];
-            if !is_file { continue; }
+            if !is_file {
+                continue;
+            }
 
             let ns_path: *mut Object = msg_send![url, path];
             let cstr: *const i8 = msg_send![ns_path, UTF8String];
-            if cstr.is_null() { continue; }
+            if cstr.is_null() {
+                continue;
+            }
 
-            let s = std::ffi::CStr::from_ptr(cstr)
-                .to_string_lossy()
-                .to_string();
+            let s = std::ffi::CStr::from_ptr(cstr).to_string_lossy().to_string();
             paths.push(PathBuf::from(s));
         }
 
-        if paths.is_empty() { None } else { Some(paths) }
+        if paths.is_empty() {
+            None
+        } else {
+            Some(paths)
+        }
     })
 }
 
@@ -138,7 +155,7 @@ pub fn write_file_paths(paths: &[PathBuf]) -> bool {
 unsafe fn nsstring(s: &str) -> *mut Object {
     let cls = class!(NSString);
     let bytes = s.as_ptr() as *const std::os::raw::c_void;
-    let len   = s.len();
+    let len = s.len();
     let obj: *mut Object = msg_send![cls, alloc];
     let obj: *mut Object = msg_send![obj, initWithBytes: bytes
                            length: len

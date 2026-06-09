@@ -1,9 +1,7 @@
 use crate::clipboard::mime::{detect_bytes, normalise_image, DetectedType};
 use crate::clipboard::pasteboard;
 use crate::clipboard::types::{ClipData, ClipEntry};
-use crate::hotkey::{
-    simulate_copy, simulate_cut, simulate_paste_delayed, HotkeyAction,
-};
+use crate::hotkey::{simulate_copy, simulate_cut, simulate_paste_delayed, HotkeyAction};
 use crate::notify;
 use crate::storage::encrypted::{load_from_vault, save_to_vault};
 use crate::storage::ram::{next_id, RamStore};
@@ -15,7 +13,7 @@ use tracing::{debug, info, warn};
 const PASTE_SETTLE_MS: u64 = 60;
 
 pub struct Engine {
-    ram:       Arc<RwLock<RamStore>>,
+    ram: Arc<RwLock<RamStore>>,
     clipboard: Clipboard,
 }
 
@@ -23,28 +21,28 @@ impl Engine {
     pub fn new(ram: Arc<RwLock<RamStore>>) -> anyhow::Result<Self> {
         Ok(Self {
             ram,
-            clipboard:    Clipboard::new()?,
+            clipboard: Clipboard::new()?,
         })
     }
 
     pub fn handle(&mut self, action: HotkeyAction) {
         info!("[ACTION] {:?}", action);
         match action {
-            HotkeyAction::StaticCopy(s)       => self.static_copy(s),
-            HotkeyAction::StaticCut(s)        => self.static_cut(s),
-            HotkeyAction::StaticPaste(s)      => self.static_paste(s),
-            HotkeyAction::StaticNavigateNext  => self.static_nav(1),
-            HotkeyAction::StaticNavigatePrev  => self.static_nav(-1),
+            HotkeyAction::StaticCopy(s) => self.static_copy(s),
+            HotkeyAction::StaticCut(s) => self.static_cut(s),
+            HotkeyAction::StaticPaste(s) => self.static_paste(s),
+            HotkeyAction::StaticNavigateNext => self.static_nav(1),
+            HotkeyAction::StaticNavigatePrev => self.static_nav(-1),
             HotkeyAction::StaticDeleteCurrent => self.static_delete(),
-            HotkeyAction::DynamicCopy         => self.dynamic_copy(),
-            HotkeyAction::DynamicCut          => self.dynamic_cut(),
-            HotkeyAction::DynamicPaste        => self.dynamic_paste(),
-            HotkeyAction::DynamicPlainPaste   => self.dynamic_plain_paste(),
+            HotkeyAction::DynamicCopy => self.dynamic_copy(),
+            HotkeyAction::DynamicCut => self.dynamic_cut(),
+            HotkeyAction::DynamicPaste => self.dynamic_paste(),
+            HotkeyAction::DynamicPlainPaste => self.dynamic_plain_paste(),
             HotkeyAction::DynamicNavigateNext => self.dynamic_nav(1),
             HotkeyAction::DynamicNavigatePrev => self.dynamic_nav(-1),
-            HotkeyAction::DynamicDeleteCurrent=> self.dynamic_delete(),
+            HotkeyAction::DynamicDeleteCurrent => self.dynamic_delete(),
             HotkeyAction::StaticPlainPaste(s) => self.static_plain_paste(s),
-            HotkeyAction::CursorReset         => self.cursor_reset(),
+            HotkeyAction::CursorReset => self.cursor_reset(),
         }
     }
 
@@ -65,7 +63,9 @@ impl Engine {
                 Ok(png) => {
                     info!("Read Image → PNG ({} bytes)", png.len());
                     return Some(ClipData::Image {
-                        bytes: png, width: img.width, height: img.height,
+                        bytes: png,
+                        width: img.width,
+                        height: img.height,
                     });
                 }
                 Err(e) => warn!("Image normalise failed: {}", e),
@@ -86,40 +86,58 @@ impl Engine {
 
     fn sync_to_system_clipboard(&mut self, data: &ClipData) -> bool {
         match data {
-            ClipData::PlainText(text) => {
-                match self.clipboard.set_text(text.clone()) {
-                    Ok(_)  => { debug!("Synced PlainText ({} chars)", text.len()); true }
-                    Err(e) => { warn!("Clipboard sync failed: {}", e); false }
+            ClipData::PlainText(text) => match self.clipboard.set_text(text.clone()) {
+                Ok(_) => {
+                    debug!("Synced PlainText ({} chars)", text.len());
+                    true
                 }
-            }
+                Err(e) => {
+                    warn!("Clipboard sync failed: {}", e);
+                    false
+                }
+            },
             ClipData::RichText(bytes) => {
                 let ok = pasteboard::write_rtf(bytes);
-                if !ok { warn!("RTF sync failed"); }
+                if !ok {
+                    warn!("RTF sync failed");
+                }
                 ok
             }
-            ClipData::Image { bytes, width, height } => {
+            ClipData::Image {
+                bytes,
+                width,
+                height,
+            } => {
                 let img = ImageData {
-                    bytes: Cow::Borrowed(bytes), width: *width, height: *height,
+                    bytes: Cow::Borrowed(bytes),
+                    width: *width,
+                    height: *height,
                 };
                 match self.clipboard.set_image(img) {
-                    Ok(_)  => true,
-                    Err(e) => { warn!("Image sync failed: {}", e); false }
+                    Ok(_) => true,
+                    Err(e) => {
+                        warn!("Image sync failed: {}", e);
+                        false
+                    }
                 }
             }
             ClipData::FilePath(paths) => {
                 let ok = pasteboard::write_file_paths(paths);
-                if !ok { warn!("FilePath sync failed"); }
+                if !ok {
+                    warn!("FilePath sync failed");
+                }
                 ok
             }
-            ClipData::Binary(bytes) => {
-                match detect_bytes(bytes) {
-                    DetectedType::PlainText => {
-                        let t = String::from_utf8_lossy(bytes).to_string();
-                        self.clipboard.set_text(t).is_ok()
-                    }
-                    _ => { warn!("Binary cannot be synced"); false }
+            ClipData::Binary(bytes) => match detect_bytes(bytes) {
+                DetectedType::PlainText => {
+                    let t = String::from_utf8_lossy(bytes).to_string();
+                    self.clipboard.set_text(t).is_ok()
                 }
-            }
+                _ => {
+                    warn!("Binary cannot be synced");
+                    false
+                }
+            },
         }
     }
 
@@ -136,12 +154,16 @@ impl Engine {
             ClipData::PlainText(t) => {
                 let s: String = t.chars().take(40).collect();
                 let s = s.replace('\n', " ");
-                if t.len() > 40 { format!("{}…", s) } else { s }
+                if t.len() > 40 {
+                    format!("{}…", s)
+                } else {
+                    s
+                }
             }
             ClipData::Image { width, height, .. } => format!("Image {}×{}", width, height),
             ClipData::FilePath(p) => format!("{} file(s)", p.len()),
             ClipData::RichText(b) => format!("RTF {} bytes", b.len()),
-            ClipData::Binary(b)   => format!("Binary {} bytes", b.len()),
+            ClipData::Binary(b) => format!("Binary {} bytes", b.len()),
         }
     }
 
@@ -152,25 +174,42 @@ impl Engine {
             ClipData::PlainText(t) => {
                 let s: String = t.chars().take(40).collect();
                 let s = s.replace('\n', "↵");
-                if t.len() > 40 { format!("\"{}…\"", s) } else { format!("\"{}\"", s) }
+                if t.len() > 40 {
+                    format!("\"{}…\"", s)
+                } else {
+                    format!("\"{}\"", s)
+                }
             }
             ClipData::Image { width, height, .. } => format!("[Image {}x{}]", width, height),
-            ClipData::FilePath(p)  => format!("[{} file(s)]", p.len()),
-            ClipData::RichText(b)  => format!("[RTF {} bytes]", b.len()),
-            ClipData::Binary(b)    => format!("[Binary {} bytes]", b.len()),
+            ClipData::FilePath(p) => format!("[{} file(s)]", p.len()),
+            ClipData::RichText(b) => format!("[RTF {} bytes]", b.len()),
+            ClipData::Binary(b) => format!("[Binary {} bytes]", b.len()),
         }
     }
 
     fn log_static_state(&self) {
         let ram = self.ram.read().unwrap();
-        debug!("┌─ Static Slots ({}/{} occupied) ──────────────────────",
-            ram.static_occupied_count(), 9);
+        debug!(
+            "┌─ Static Slots ({}/{} occupied) ──────────────────────",
+            ram.static_occupied_count(),
+            9
+        );
         for i in 1..=9usize {
-            let marker = if i == ram.static_cursor_slot() { "►" } else { " " };
+            let marker = if i == ram.static_cursor_slot() {
+                "►"
+            } else {
+                " "
+            };
             match ram.get_static(i) {
-                Some(e) => debug!("│ {} slot {} → id={} type={} | {}",
-                    marker, i, e.id, e.data.type_label(), self.entry_preview(e)),
-                None    => debug!("│ {} slot {} → NULL", marker, i),
+                Some(e) => debug!(
+                    "│ {} slot {} → id={} type={} | {}",
+                    marker,
+                    i,
+                    e.id,
+                    e.data.type_label(),
+                    self.entry_preview(e)
+                ),
+                None => debug!("│ {} slot {} → NULL", marker, i),
             }
         }
         debug!("└──────────────────────────────────────────────────────");
@@ -183,10 +222,18 @@ impl Engine {
         debug!("┌─ Ring State ({} entries) ─────────────────────────", len);
         for (i, entry) in ram.dynamic_ring.iter().enumerate() {
             let marker = if i == cur { "►" } else { " " };
-            debug!("│ {} [{}] id={} type={} | {}",
-                marker, i, entry.id, entry.data.type_label(), self.entry_preview(entry));
+            debug!(
+                "│ {} [{}] id={} type={} | {}",
+                marker,
+                i,
+                entry.id,
+                entry.data.type_label(),
+                self.entry_preview(entry)
+            );
         }
-        if len == 0 { debug!("│   (empty)"); }
+        if len == 0 {
+            debug!("│   (empty)");
+        }
         debug!("└─ Cursor [{}] — live in Cmd+V ──────────────────────", cur);
     }
 
@@ -199,8 +246,13 @@ impl Engine {
         simulate_copy();
         if let Some(data) = self.read_clipboard() {
             let preview = Self::short_preview(&data);
-            let entry   = ClipEntry::new(next_id(), data);
-            info!("[Static][COPY] slot={} ← id={} type={}", slot, entry.id, entry.data.type_label());
+            let entry = ClipEntry::new(next_id(), data);
+            info!(
+                "[Static][COPY] slot={} ← id={} type={}",
+                slot,
+                entry.id,
+                entry.data.type_label()
+            );
             self.ram.write().unwrap().set_static(slot, entry);
             self.log_static_state();
             notify::notify_static_copy(slot, &preview);
@@ -212,8 +264,13 @@ impl Engine {
         simulate_cut();
         if let Some(data) = self.read_clipboard() {
             let preview = Self::short_preview(&data);
-            let entry   = ClipEntry::new(next_id(), data);
-            info!("[Static][CUT] slot={} ← id={} type={}", slot, entry.id, entry.data.type_label());
+            let entry = ClipEntry::new(next_id(), data);
+            info!(
+                "[Static][CUT] slot={} ← id={} type={}",
+                slot,
+                entry.id,
+                entry.data.type_label()
+            );
             self.ram.write().unwrap().set_static(slot, entry);
             self.log_static_state();
             notify::notify_static_cut(slot, &preview);
@@ -221,7 +278,12 @@ impl Engine {
     }
 
     fn static_paste(&mut self, slot: usize) {
-        let data = self.ram.read().unwrap().get_static(slot).map(|e| e.data.clone());
+        let data = self
+            .ram
+            .read()
+            .unwrap()
+            .get_static(slot)
+            .map(|e| e.data.clone());
         match data {
             Some(d) => {
                 info!("[Static][PASTE] slot={} — syncing + scheduling", slot);
@@ -236,7 +298,12 @@ impl Engine {
     }
 
     fn static_plain_paste(&mut self, slot: usize) {
-        let data = self.ram.read().unwrap().get_static(slot).map(|e| e.data.clone());
+        let data = self
+            .ram
+            .read()
+            .unwrap()
+            .get_static(slot)
+            .map(|e| e.data.clone());
         match data {
             Some(ClipData::RichText(ref bytes)) => {
                 info!("[Static][PLAIN PASTE] slot={} — stripping RTF", slot);
@@ -253,7 +320,10 @@ impl Engine {
                 }
             }
             Some(d) => {
-                info!("[Static][PLAIN PASTE] slot={} — not RTF, pasting as-is", slot);
+                info!(
+                    "[Static][PLAIN PASTE] slot={} — not RTF, pasting as-is",
+                    slot
+                );
                 self.write_and_paste(&d);
                 notify::notify_static_plain_paste(slot);
             }
@@ -272,11 +342,18 @@ impl Engine {
         };
         match result {
             Some(slot) => {
-                let data = self.ram.read().unwrap().static_cursor_entry()
+                let data = self
+                    .ram
+                    .read()
+                    .unwrap()
+                    .static_cursor_entry()
                     .map(|e| (e.id, e.data.type_label(), e.data.clone()));
                 if let Some((id, type_label, d)) = data {
                     let preview = Self::short_preview(&d);
-                    info!("[Static][NAV] → slot {} id={} type={}", slot, id, type_label);
+                    info!(
+                        "[Static][NAV] → slot {} id={} type={}",
+                        slot, id, type_label
+                    );
                     self.sync_to_system_clipboard(&d);
                     self.log_static_state();
                     notify::notify_static_nav(slot, &preview);
@@ -290,7 +367,7 @@ impl Engine {
     }
 
     fn static_delete(&mut self) {
-        let slot     = self.ram.read().unwrap().static_cursor_slot();
+        let slot = self.ram.read().unwrap().static_cursor_slot();
         let was_some = self.ram.read().unwrap().static_cursor_entry().is_some();
         if was_some {
             self.ram.write().unwrap().static_delete_at_cursor();
@@ -312,11 +389,17 @@ impl Engine {
         simulate_copy();
         if let Some(data) = self.read_clipboard() {
             let preview = Self::short_preview(&data);
-            let entry   = ClipEntry::new(next_id(), data);
-            info!("[Dynamic][COPY] id={} type={} size={}B → ring[0]",
-                entry.id, entry.data.type_label(), entry.data.size_bytes());
+            let entry = ClipEntry::new(next_id(), data);
+            info!(
+                "[Dynamic][COPY] id={} type={} size={}B → ring[0]",
+                entry.id,
+                entry.data.type_label(),
+                entry.data.size_bytes()
+            );
             let evicted = self.ram.write().unwrap().push_dynamic(entry.clone());
-            if let Some(old) = evicted { info!("[Dynamic][EVICT] Dropped: {}", old); }
+            if let Some(old) = evicted {
+                info!("[Dynamic][EVICT] Dropped: {}", old);
+            }
             self.sync_to_system_clipboard(&entry.data);
             let (pos, total) = {
                 let ram = self.ram.read().unwrap();
@@ -332,8 +415,12 @@ impl Engine {
         simulate_cut();
         if let Some(data) = self.read_clipboard() {
             let preview = Self::short_preview(&data);
-            let entry   = ClipEntry::new(next_id(), data);
-            info!("[Dynamic][CUT] id={} type={} → ring[0]", entry.id, entry.data.type_label());
+            let entry = ClipEntry::new(next_id(), data);
+            info!(
+                "[Dynamic][CUT] id={} type={} → ring[0]",
+                entry.id,
+                entry.data.type_label()
+            );
             self.ram.write().unwrap().push_dynamic(entry.clone());
             self.sync_to_system_clipboard(&entry.data);
             let (pos, total) = {
@@ -348,11 +435,15 @@ impl Engine {
     fn dynamic_paste(&mut self) {
         let data = {
             let ram = self.ram.read().unwrap();
-            ram.current_dynamic().map(|e| (e.id, e.data.clone(), ram.dynamic_cursor, ram.ring_len()))
+            ram.current_dynamic()
+                .map(|e| (e.id, e.data.clone(), ram.dynamic_cursor, ram.ring_len()))
         };
         match data {
             Some((id, d, cursor, total)) => {
-                info!("[Dynamic][PASTE] ring[{}] id={} — syncing + scheduling", cursor, id);
+                info!(
+                    "[Dynamic][PASTE] ring[{}] id={} — syncing + scheduling",
+                    cursor, id
+                );
                 self.write_and_paste(&d);
                 notify::notify_dynamic_paste(cursor + 1, total);
             }
@@ -366,11 +457,15 @@ impl Engine {
     fn dynamic_plain_paste(&mut self) {
         let data = {
             let ram = self.ram.read().unwrap();
-            ram.current_dynamic().map(|e| (e.id, e.data.clone(), ram.dynamic_cursor, ram.ring_len()))
+            ram.current_dynamic()
+                .map(|e| (e.id, e.data.clone(), ram.dynamic_cursor, ram.ring_len()))
         };
         match data {
             Some((id, ClipData::RichText(ref bytes), cursor, total)) => {
-                info!("[Dynamic][PLAIN PASTE] ring[{}] id={} — stripping RTF", cursor, id);
+                info!(
+                    "[Dynamic][PLAIN PASTE] ring[{}] id={} — stripping RTF",
+                    cursor, id
+                );
                 match pasteboard::rtf_to_plain_text(bytes) {
                     Some(text) => {
                         let plain = ClipData::PlainText(text);
@@ -378,13 +473,19 @@ impl Engine {
                         notify::notify_dynamic_plain_paste(cursor + 1, total);
                     }
                     None => {
-                        warn!("[Dynamic][PLAIN PASTE] RTF strip failed at ring[{}]", cursor);
+                        warn!(
+                            "[Dynamic][PLAIN PASTE] RTF strip failed at ring[{}]",
+                            cursor
+                        );
                         notify::notify_ring_empty();
                     }
                 }
             }
             Some((_id, d, cursor, total)) => {
-                info!("[Dynamic][PLAIN PASTE] ring[{}] — not RTF, pasting as-is", cursor);
+                info!(
+                    "[Dynamic][PLAIN PASTE] ring[{}] — not RTF, pasting as-is",
+                    cursor
+                );
                 self.write_and_paste(&d);
                 notify::notify_dynamic_plain_paste(cursor + 1, total);
             }
@@ -398,18 +499,34 @@ impl Engine {
     fn dynamic_nav(&mut self, direction: i32) {
         {
             let mut ram = self.ram.write().unwrap();
-            if direction > 0 { ram.cursor_next(); } else { ram.cursor_prev(); }
+            if direction > 0 {
+                ram.cursor_next();
+            } else {
+                ram.cursor_prev();
+            }
         }
         let data = {
             let ram = self.ram.read().unwrap();
             ram.current_dynamic().map(|e| {
-                (e.id, e.data.type_label(), ram.dynamic_cursor, ram.ring_len(), e.data.clone())
+                (
+                    e.id,
+                    e.data.type_label(),
+                    ram.dynamic_cursor,
+                    ram.ring_len(),
+                    e.data.clone(),
+                )
             })
         };
         match data {
             Some((id, type_label, cursor, total, d)) => {
                 let preview = Self::short_preview(&d);
-                info!("[Dynamic][NAV] [{}/{}] id={} type={}", cursor+1, total, id, type_label);
+                info!(
+                    "[Dynamic][NAV] [{}/{}] id={} type={}",
+                    cursor + 1,
+                    total,
+                    id,
+                    type_label
+                );
                 self.sync_to_system_clipboard(&d);
                 self.log_ring_state();
                 notify::notify_dynamic_nav(cursor + 1, total, &preview);
@@ -429,11 +546,18 @@ impl Engine {
             return;
         }
         let cursor = self.ram.read().unwrap().dynamic_cursor;
-        let id     = self.ram.read().unwrap().current_dynamic().map(|e| e.id);
+        let id = self.ram.read().unwrap().current_dynamic().map(|e| e.id);
         self.ram.write().unwrap().delete_at_cursor();
         info!("[Dynamic][DELETE] Removed ring[{}] id={:?}", cursor, id);
-        let next = self.ram.read().unwrap().current_dynamic().map(|e| e.data.clone());
-        if let Some(d) = next { self.sync_to_system_clipboard(&d); }
+        let next = self
+            .ram
+            .read()
+            .unwrap()
+            .current_dynamic()
+            .map(|e| e.data.clone());
+        if let Some(d) = next {
+            self.sync_to_system_clipboard(&d);
+        }
         self.log_ring_state();
         notify::notify_dynamic_delete(cursor);
     }
@@ -443,8 +567,15 @@ impl Engine {
         if was_at != 0 {
             self.ram.write().unwrap().reset_cursor();
             info!("[Dynamic][TIMEOUT] Cursor reset [{}]→[0]", was_at + 1);
-            let d = self.ram.read().unwrap().current_dynamic().map(|e| e.data.clone());
-            if let Some(data) = d { self.sync_to_system_clipboard(&data); }
+            let d = self
+                .ram
+                .read()
+                .unwrap()
+                .current_dynamic()
+                .map(|e| e.data.clone());
+            if let Some(data) = d {
+                self.sync_to_system_clipboard(&data);
+            }
             self.log_ring_state();
         }
     }
