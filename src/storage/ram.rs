@@ -2,7 +2,6 @@ use crate::clipboard::types::{ClipEntry, EntryId};
 use std::collections::VecDeque;
 use std::time::Instant;
 
-
 pub const STATIC_SLOTS: usize = 9;
 
 /// Cursor timeout in seconds — resets to most recent after this idle period
@@ -32,14 +31,14 @@ pub fn next_id() -> EntryId {
 }
 
 pub struct RamStore {
-    pub static_slots:   [Option<ClipEntry>; STATIC_SLOTS],
-    pub static_cursor:  usize,
-    pub dynamic_ring:   VecDeque<ClipEntry>,
+    pub static_slots: [Option<ClipEntry>; STATIC_SLOTS],
+    pub static_cursor: usize,
+    pub dynamic_ring: VecDeque<ClipEntry>,
     pub dynamic_cursor: usize,
-    pub capacity:       usize,
+    pub capacity: usize,
 
     /// Tracks when the user last navigated — used by timeout task
-    pub last_nav_time:  Instant,
+    pub last_nav_time: Instant,
 
     pub dirty: bool,
 }
@@ -93,14 +92,20 @@ impl RamStore {
             let next = if direction > 0 {
                 (cur + 1) % STATIC_SLOTS
             } else {
-                if cur == 0 { STATIC_SLOTS - 1 } else { cur - 1 }
+                if cur == 0 {
+                    STATIC_SLOTS - 1
+                } else {
+                    cur - 1
+                }
             };
             cur = next;
             if self.static_slots[cur].is_some() {
                 self.static_cursor = cur;
                 return Some(cur + 1);
             }
-            if cur == start { break; }
+            if cur == start {
+                break;
+            }
         }
         None
     }
@@ -139,11 +144,7 @@ impl RamStore {
         let mut evicted = None;
         if self.dynamic_ring.len() >= self.capacity {
             if let Some(old) = self.dynamic_ring.pop_back() {
-                evicted = Some(format!(
-                    "id={} ({})",
-                    old.id,
-                    old.data.type_label()
-                ));
+                evicted = Some(format!("id={} ({})", old.id, old.data.type_label()));
             }
         }
         self.dynamic_ring.push_front(entry);
@@ -158,14 +159,18 @@ impl RamStore {
 
     /// Move cursor forward (→ older). Wraps around.
     pub fn cursor_next(&mut self) {
-        if self.dynamic_ring.is_empty() { return; }
+        if self.dynamic_ring.is_empty() {
+            return;
+        }
         self.dynamic_cursor = (self.dynamic_cursor + 1) % self.dynamic_ring.len();
         self.last_nav_time = Instant::now();
     }
 
     /// Move cursor backward (→ newer). Wraps around.
     pub fn cursor_prev(&mut self) {
-        if self.dynamic_ring.is_empty() { return; }
+        if self.dynamic_ring.is_empty() {
+            return;
+        }
         let len = self.dynamic_ring.len();
         self.dynamic_cursor = if self.dynamic_cursor == 0 {
             len - 1
@@ -200,7 +205,10 @@ impl RamStore {
         self.dynamic_ring.len()
     }
 
-    pub fn clear_dirty(&mut self) { self.dirty = false; }
-    pub fn is_dirty(&self)        -> bool { self.dirty }
+    pub fn clear_dirty(&mut self) {
+        self.dirty = false;
+    }
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
 }
-

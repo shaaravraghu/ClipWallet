@@ -15,9 +15,7 @@
 //! FlagsChanged churn.
 
 use crate::hotkey::SYNTHETIC_TAG;
-use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode, EventField,
-};
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode, EventField};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use std::thread::sleep;
 use std::time::Duration;
@@ -41,16 +39,19 @@ const PASTE_PREDELAY_MS: u64 = 350;
 /// cloneable across crate versions.
 fn tagged_cmd_event(keycode: CGKeyCode, key_down: bool) -> Option<CGEvent> {
     let source = match CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
-        Ok(s)  => s,
+        Ok(s) => s,
         Err(_) => {
             error!("injector: failed to create CGEventSource");
             return None;
         }
     };
     let event = match CGEvent::new_keyboard_event(source, keycode, key_down) {
-        Ok(e)  => e,
+        Ok(e) => e,
         Err(_) => {
-            error!("injector: failed to create keyboard event for keycode {}", keycode);
+            error!(
+                "injector: failed to create keyboard event for keycode {}",
+                keycode
+            );
             return None;
         }
     };

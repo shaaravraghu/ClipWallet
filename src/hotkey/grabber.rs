@@ -35,22 +35,22 @@ use crate::hotkey::{ChordDetector, HotkeyAction, SYNTHETIC_TAG};
 use core_foundation::base::TCFType;
 use core_foundation::mach_port::CFMachPortRef;
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopRef, CFRunLoopStop};
-use std::cell::Cell;
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::mpsc::sync_channel;
-use std::sync::mpsc::SyncSender;
 use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation,
-    CGEventTapOptions, CGEventTapPlacement, CGEventType, EventField,
+    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEventType, EventField,
 };
 use core_graphics::event_source::CGEventSourceStateID;
 use std::cell::Cell;
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::SyncSender;
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 // CoreGraphics symbols the `core-graphics` crate does not wrap. CoreGraphics is
@@ -106,17 +106,15 @@ unsafe impl Sync for RunLoopHandle {}
 impl GrabberHandle {
     pub fn stop(&self) {
         self.suppressed.store(true, Ordering::SeqCst);
-        unsafe { CFRunLoopStop(self.run_loop.0); }
+        unsafe {
+            CFRunLoopStop(self.run_loop.0);
+        }
     }
 }
 
-
 /// Spawn the event tap on its own OS thread and return a stoppable handle.
 /// Replaces the previous fire-and-forget `start_event_tap` call site.
-pub fn spawn_event_tap(
-    tx: SyncSender<HotkeyAction>,
-    mode_static: bool,
-) -> GrabberHandle {
+pub fn spawn_event_tap(tx: SyncSender<HotkeyAction>, mode_static: bool) -> GrabberHandle {
     let (loop_tx, loop_rx) = sync_channel::<RunLoopHandle>(1);
     let suppressed = Arc::new(AtomicBool::new(false));
     let suppressed_thread = suppressed.clone();
@@ -145,9 +143,9 @@ fn start_event_tap_inner(
     suppressed: Arc<AtomicBool>,
 ) {
     let state = Rc::new(EventTapState {
-        detector:  RefCell::new(ChordDetector::new()),
+        detector: RefCell::new(ChordDetector::new()),
         mod_state: Cell::new(CGEventFlags::empty()),
-        active:    AtomicBool::new(false),
+        active: AtomicBool::new(false),
     });
 
     // The callback needs to re-enable the tap on timeout, but the `CGEventTap`
@@ -156,7 +154,7 @@ fn start_event_tap_inner(
     // loop delivers the first event.
     let tap_port: Rc<Cell<Option<CFMachPortRef>>> = Rc::new(Cell::new(None));
 
-    let state_cb    = Rc::clone(&state);
+    let state_cb = Rc::clone(&state);
     let tap_port_cb = Rc::clone(&tap_port);
     let suppressed_cb = suppressed.clone();
 
@@ -167,7 +165,11 @@ fn start_event_tap_inner(
         CGEventTapLocation::HID,
         CGEventTapPlacement::HeadInsertEventTap,
         CGEventTapOptions::Default,
-        vec![CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged],        
+        vec![
+            CGEventType::KeyDown,
+            CGEventType::KeyUp,
+            CGEventType::FlagsChanged,
+        ],
         move |_proxy, event_type, event| {
             if suppressed_cb.load(Ordering::Relaxed) {
                 return Some(event.to_owned());
@@ -175,10 +177,11 @@ fn start_event_tap_inner(
 
             match event_type {
                 // ── Tap disabled: re-enable and re-sync BEFORE returning ──
-                CGEventType::TapDisabledByTimeout
-                | CGEventType::TapDisabledByUserInput => {
+                CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
                     if let Some(port) = tap_port_cb.get() {
-                        unsafe { CGEventTapEnable(port, true); }
+                        unsafe {
+                            CGEventTapEnable(port, true);
+                        }
                     }
                     resync_after_reenable(&state_cb);
                     None
@@ -186,7 +189,6 @@ fn start_event_tap_inner(
                 _ => handle_event(&state_cb, &tx, event_type, event, mode_static),
             }
         },
-
     )
     .expect("CGEventTap creation failed — ensure Accessibility permission is granted");
 
@@ -247,7 +249,7 @@ fn resync_after_reenable(state: &EventTapState) {
     // have been missed while it was disabled (issue #27, review pt 5).
     detector.reset();
 
-    let raw  = unsafe { CGEventSourceFlagsState(CGEventSourceStateID::CombinedSessionState) };
+    let raw = unsafe { CGEventSourceFlagsState(CGEventSourceStateID::CombinedSessionState) };
     let live = CGEventFlags::from_bits_truncate(raw);
     let masked = mask_qualifying(live);
 
@@ -263,10 +265,10 @@ fn resync_after_reenable(state: &EventTapState) {
 }
 
 fn handle_event(
-    state:       &EventTapState,
-    tx:          &SyncSender<HotkeyAction>,
-    event_type:  CGEventType,
-    event:       &CGEvent,
+    state: &EventTapState,
+    tx: &SyncSender<HotkeyAction>,
+    event_type: CGEventType,
+    event: &CGEvent,
     mode_static: bool,
 ) -> Option<CGEvent> {
     // ── Synthetic-event short-circuit (issue #27, review pt 6) ────────────
@@ -278,12 +280,11 @@ fn handle_event(
     }
 
     match event_type {
-
         // ── FlagsChanged: the tier-1 listener ─────────────────────────────
         CGEventType::FlagsChanged => {
-            let flags  = event.get_flags();
+            let flags = event.get_flags();
             let masked = mask_qualifying(flags);
-            let prev   = state.mod_state.replace(masked);
+            let prev = state.mod_state.replace(masked);
 
             // Gate from the COMPLETE masked state, not from the single bit this
             // event toggled (issue #27, review pt 1). One qualifying bit still
@@ -318,24 +319,26 @@ fn handle_event(
             let mut detector = state.detector.borrow_mut();
 
             // Filter autorepeat inside an active chord.
-            let is_repeat = event
-                .get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT)
-                == 1;
+            let is_repeat =
+                event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) == 1;
             if is_repeat && detector.cmd() && detector.opt() {
                 return None;
             }
 
-            let keycode = event
-                .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
-                as u16;
+            let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
             let key = match keycode_to_rdev(keycode) {
                 Some(k) => k,
-                None    => return Some(event.to_owned()),
+                None => return Some(event.to_owned()),
             };
 
             // Update detector held set FIRST so digit actions see C/X/V.
             detector.key_down(key.clone());
-            debug!("KeyDown {:?}  cmd={} opt={}", key, detector.cmd(), detector.opt());
+            debug!(
+                "KeyDown {:?}  cmd={} opt={}",
+                key,
+                detector.cmd(),
+                detector.opt()
+            );
 
             if detector.cmd() && detector.opt() {
                 if let Some(action) = detector.evaluate_press(&key, mode_static) {
@@ -350,12 +353,10 @@ fn handle_event(
 
         // ── KeyUp ───────────────────────────────────────────────────────
         CGEventType::KeyUp => {
-            let keycode = event
-                .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
-                as u16;
+            let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
             let key = match keycode_to_rdev(keycode) {
                 Some(k) => k,
-                None    => return Some(event.to_owned()),
+                None => return Some(event.to_owned()),
             };
 
             let mut detector = state.detector.borrow_mut();
@@ -382,7 +383,10 @@ fn handle_event(
             // can already show Opt=false by the time the letter's KeyUp fires.
             let was_active = detector.cmd() && detector.opt();
             let is_pending = detector.is_pending_chord_key(&key);
-            debug!("KeyUp {:?}  detector_active={}  pending={}", key, was_active, is_pending);
+            debug!(
+                "KeyUp {:?}  detector_active={}  pending={}",
+                key, was_active, is_pending
+            );
 
             if was_active || is_pending {
                 if let Some(action) = detector.evaluate_release(&key, mode_static) {
@@ -396,7 +400,9 @@ fn handle_event(
             detector.key_up(key);
 
             // Suppress the raw event only if the chord was active.
-            if was_active { return None; }
+            if was_active {
+                return None;
+            }
             Some(event.to_owned())
         }
 
@@ -429,26 +435,53 @@ fn sync_modifiers(detector: &mut ChordDetector, flags: CGEventFlags) {
 fn keycode_to_rdev(code: u16) -> Option<rdev::Key> {
     use rdev::Key::*;
     Some(match code {
-        0  => KeyA,  1  => KeyS,  2  => KeyD,  3  => KeyF,
-        4  => KeyH,  5  => KeyG,  6  => KeyZ,  7  => KeyX,
-        8  => KeyC,  9  => KeyV,  11 => KeyB,  12 => KeyQ,
-        13 => KeyW,  14 => KeyE,  15 => KeyR,  16 => KeyY,
-        17 => KeyT,  31 => KeyO,  32 => KeyU,  34 => KeyI,
-        35 => KeyP,  37 => KeyL,  38 => KeyJ,  40 => KeyK,
-        45 => KeyN,  46 => KeyM,
+        0 => KeyA,
+        1 => KeyS,
+        2 => KeyD,
+        3 => KeyF,
+        4 => KeyH,
+        5 => KeyG,
+        6 => KeyZ,
+        7 => KeyX,
+        8 => KeyC,
+        9 => KeyV,
+        11 => KeyB,
+        12 => KeyQ,
+        13 => KeyW,
+        14 => KeyE,
+        15 => KeyR,
+        16 => KeyY,
+        17 => KeyT,
+        31 => KeyO,
+        32 => KeyU,
+        34 => KeyI,
+        35 => KeyP,
+        37 => KeyL,
+        38 => KeyJ,
+        40 => KeyK,
+        45 => KeyN,
+        46 => KeyM,
 
-        18 => Num1,  19 => Num2,  20 => Num3,
-        21 => Num4,  23 => Num5,  22 => Num6,
-        26 => Num7,  28 => Num8,  25 => Num9,
+        18 => Num1,
+        19 => Num2,
+        20 => Num3,
+        21 => Num4,
+        23 => Num5,
+        22 => Num6,
+        26 => Num7,
+        28 => Num8,
+        25 => Num9,
         29 => Num0,
 
-        48  => Tab,
-        53  => Escape,
-        36  => Return,
-        51  => Backspace,
-        49  => Space,
-        123 => LeftArrow, 124 => RightArrow,
-        125 => DownArrow,  126 => UpArrow,
+        48 => Tab,
+        53 => Escape,
+        36 => Return,
+        51 => Backspace,
+        49 => Space,
+        123 => LeftArrow,
+        124 => RightArrow,
+        125 => DownArrow,
+        126 => UpArrow,
         _ => return None,
     })
 }
@@ -477,9 +510,8 @@ mod tests {
         // Cmd held, then Caps Lock toggles: the masked state is identical, so
         // the tier gate sees no change and cannot fire spuriously (review pt 2).
         let before = mask_qualifying(CGEventFlags::CGEventFlagCommand);
-        let after  = mask_qualifying(
-            CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagAlphaShift,
-        );
+        let after =
+            mask_qualifying(CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagAlphaShift);
         assert_eq!(before, after);
         assert!(qualifies(after));
     }
@@ -487,10 +519,14 @@ mod tests {
     #[test]
     fn gate_engages_on_either_modifier_only() {
         assert!(qualifies(mask_qualifying(CGEventFlags::CGEventFlagCommand)));
-        assert!(qualifies(mask_qualifying(CGEventFlags::CGEventFlagAlternate)));
+        assert!(qualifies(mask_qualifying(
+            CGEventFlags::CGEventFlagAlternate
+        )));
         // Non-qualifying modifiers alone must NOT engage tier 2.
         assert!(!qualifies(mask_qualifying(CGEventFlags::CGEventFlagShift)));
-        assert!(!qualifies(mask_qualifying(CGEventFlags::CGEventFlagControl)));
+        assert!(!qualifies(mask_qualifying(
+            CGEventFlags::CGEventFlagControl
+        )));
         assert!(!qualifies(mask_qualifying(CGEventFlags::empty())));
     }
 }

@@ -6,8 +6,8 @@ mod hotkey;
 mod notify;
 mod storage;
 
-use crate::config::{set_mode, ClipMode};
 use crate::config::Config;
+use crate::config::{set_mode, ClipMode};
 use crate::engine::Engine;
 use crate::hotkey::HotkeyAction;
 use crate::storage::{disk, ram::FLUSH_INTERVAL_SECS, RamStore};
@@ -22,9 +22,9 @@ use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(
-    name    = "clipwallet",
+    name = "clipwallet",
     version = "0.1.0",
-    about   = "A persistent, encrypted clipboard manager for macOS",
+    about = "A persistent, encrypted clipboard manager for macOS",
     long_about = "
 ClipWallet — Multi-slot clipboard manager with RAM/disk/encrypted storage.
 
@@ -172,7 +172,9 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── change mode ───────────────────────────────────────────────────────
-        Commands::Change { what: ChangeTarget::Mode } => {
+        Commands::Change {
+            what: ChangeTarget::Mode,
+        } => {
             let current = config::load().mode;
             println!("Current mode: {}", current);
             println!();
@@ -211,7 +213,9 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── remove encryption ─────────────────────────────────────────────────
-        Commands::Remove { target: RemoveTarget::Encryption } => {
+        Commands::Remove {
+            target: RemoveTarget::Encryption,
+        } => {
             println!("This will permanently delete the encryption key from Keychain");
             println!("and erase all vault-encrypted entries. Continue? [y/N]");
 
@@ -234,17 +238,21 @@ async fn main() -> anyhow::Result<()> {
 
             // Remove Keychain key
             match storage::delete_key() {
-                Ok(_)  => println!("Keychain key removed ✓"),
+                Ok(_) => println!("Keychain key removed ✓"),
                 Err(e) => println!("Keychain key not found ({})", e),
             }
 
             notify::notify_encryption_removed();
             println!("Encryption removed. New data will still be stored (unencrypted vault).");
-            println!("To re-enable: restart the daemon — it will generate a new key automatically.");
+            println!(
+                "To re-enable: restart the daemon — it will generate a new key automatically."
+            );
         }
 
         // ── clear memory ──────────────────────────────────────────────────────
-        Commands::Clear { target: ClearTarget::Memory } => {
+        Commands::Clear {
+            target: ClearTarget::Memory,
+        } => {
             println!("This will erase ALL clipboard history (dynamic ring + static slots).");
             println!("Vault-encrypted entries are NOT affected. Continue? [y/N]");
 
@@ -276,7 +284,9 @@ async fn main() -> anyhow::Result<()> {
                 println!("Vault is empty.");
             } else {
                 println!("── Vault Entries ────────────────────────────────────");
-                for id in &ids { println!("  id = {}", id); }
+                for id in &ids {
+                    println!("  id = {}", id);
+                }
                 println!("  Total: {}", ids.len());
                 println!("─────────────────────────────────────────────────────");
             }
@@ -297,7 +307,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()> {
     // ── Load mode from persistent config ─────────────────────────────────────
-    let cfg         = config::load();
+    let cfg = config::load();
     let mode_static = cfg.mode == ClipMode::Static;
 
     // ── Determine ring capacity ───────────────────────────────────────────────
@@ -341,7 +351,7 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
             let _ = tx_bridge.send(action);
         }
     });
-    // Returns a handle we can use from the shutdown handler to stop the tap cleanly 
+    // Returns a handle we can use from the shutdown handler to stop the tap cleanly
     // via CFRunLoopStop instead of leaving it running while
     // we flush: closes the race where late events would mutate RAM
     // mid-flush.
@@ -408,7 +418,7 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
 
     // ── Task 5: Cursor timeout watchdog ───────────────────────────────────────
     let ram_cursor = Arc::clone(&ram);
-    let tx_cursor  = tx.clone();
+    let tx_cursor = tx.clone();
     let cursor_handle = tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(1));
         loop {
@@ -429,8 +439,6 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
     Ok(())
 }
 
-
-
 // ── Vault Key Rotation ────────────────────────────────────────────────────────
 
 fn rotate_vault_key() -> anyhow::Result<()> {
@@ -448,17 +456,19 @@ fn rotate_vault_key() -> anyhow::Result<()> {
     let ids = storage::list_vault_ids();
     let mut entries = Vec::new();
     for id in &ids {
-        let path  = dir.join(format!("{}.vlt", id));
+        let path = dir.join(format!("{}.vlt", id));
         let bytes = std::fs::read(&path)?;
         match decrypt_entry(&bytes) {
-            Ok(e)  => entries.push(e),
+            Ok(e) => entries.push(e),
             Err(e) => eprintln!("Warning: Could not decrypt id={}: {}", id, e),
         }
     }
 
     delete_key()?;
     get_or_create_key()?;
-    for entry in &entries { save_to_vault(entry)?; }
+    for entry in &entries {
+        save_to_vault(entry)?;
+    }
     println!("Key rotated — {} entries re-encrypted ✓", entries.len());
     Ok(())
 }

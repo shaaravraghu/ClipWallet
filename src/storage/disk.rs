@@ -39,7 +39,7 @@ fn wrap_envelope(payload: &[u8], entry_count: u32) -> Vec<u8> {
 }
 
 enum DecodeResult<T> {
-    Validated(T),       // new format, crc + count verified
+    Validated(T),         // new format, crc + count verified
     LegacyUnvalidated(T), // old format, decoded but no integrity check
     Corrupt(String),
 }
@@ -92,8 +92,11 @@ fn quarantine(path: &PathBuf, reason: &str) {
     let ts = Utc::now().format("%Y%m%dT%H%M%S").to_string();
     let dst = path.with_extension(format!("corrupt.{}", ts));
     match fs::rename(path, &dst) {
-        Ok(_)  => warn!("Quarantined corrupt file → {:?} ({})", dst, reason),
-        Err(e) => error!("Quarantine failed for {:?}: {} (original reason: {})", path, e, reason),
+        Ok(_) => warn!("Quarantined corrupt file → {:?} ({})", dst, reason),
+        Err(e) => error!(
+            "Quarantine failed for {:?}: {} (original reason: {})",
+            path, e, reason
+        ),
     }
 }
 
@@ -108,11 +111,16 @@ fn quarantine(path: &PathBuf, reason: &str) {
 fn atomic_write(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
     let tmp = path.with_extension("tmp");
     {
-        let mut f = OpenOptions::new()
-            .write(true).create(true).truncate(true)
-            .open(&tmp)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut f = options.open(&tmp)?;
         f.write_all(bytes)?;
-        f.sync_all()?;              // ← content reaches disk
+        f.sync_all()?; // ← content reaches disk
     }
     fs::rename(&tmp, path)?;
 
@@ -128,7 +136,9 @@ fn atomic_write(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
 
 pub fn cleanup_tmp_files() {
     let dir = store_dir();
-    if !dir.exists() { return; }
+    if !dir.exists() {
+        return;
+    }
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
@@ -155,6 +165,16 @@ pub fn flush_force(ram: &mut RamStore) -> anyhow::Result<()> {
     let dir = store_dir();
     fs::create_dir_all(&dir)?;
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(&dir) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o700);
+            let _ = fs::set_permissions(&dir, perms);
+        }
+    }
+
     // Static slots: one file per slot, each wraps a single ClipEntry.
     for (i, slot) in ram.static_slots.iter().enumerate() {
         let path = dir.join(format!("slot_{}.mpk", i + 1));
@@ -164,7 +184,9 @@ pub fn flush_force(ram: &mut RamStore) -> anyhow::Result<()> {
                 let bytes = wrap_envelope(&payload, 1);
                 atomic_write(&path, &bytes)?;
             }
-            None => { let _ = fs::remove_file(&path); }
+            None => {
+                let _ = fs::remove_file(&path);
+            }
         }
     }
 
@@ -198,7 +220,9 @@ pub fn load(ram: &mut RamStore) -> anyhow::Result<()> {
 
     for i in 0..9usize {
         let path = dir.join(format!("slot_{}.mpk", i + 1));
-        if !path.exists() { continue; }
+        if !path.exists() {
+            continue;
+        }
         match fs::read(&path) {
             Ok(bytes) => match decode_envelope::<ClipEntry>(&bytes, Some(1)) {
                 DecodeResult::Validated(entry) => {
@@ -271,9 +295,9 @@ mod tests {
     fn test_envelope_roundtrip() {
         let payload_data = vec!["entry1".to_string(), "entry2".to_string()];
         let msgpack_payload = rmp_serde::to_vec(&payload_data).unwrap();
-        
+
         let enveloped = wrap_envelope(&msgpack_payload, 2);
-        
+
         let result = decode_envelope::<Vec<String>>(&enveloped, Some(2));
         match result {
             DecodeResult::Validated(decoded) => assert_eq!(decoded, payload_data),
@@ -285,7 +309,7 @@ mod tests {
     fn test_legacy_format_fallback() {
         let payload_data = vec!["legacy_entry".to_string()];
         let msgpack_payload = rmp_serde::to_vec(&payload_data).unwrap();
-        
+
         let result = decode_envelope::<Vec<String>>(&msgpack_payload, Some(1));
         match result {
             DecodeResult::LegacyUnvalidated(decoded) => assert_eq!(decoded, payload_data),
@@ -298,10 +322,10 @@ mod tests {
         let payload_data = vec!["test_data".to_string()];
         let msgpack_payload = rmp_serde::to_vec(&payload_data).unwrap();
         let mut enveloped = wrap_envelope(&msgpack_payload, 1);
-        
+
         // Corrupt the payload section
-        enveloped[12] ^= 0xFF; 
-        
+        enveloped[12] ^= 0xFF;
+
         let result = decode_envelope::<Vec<String>>(&enveloped, Some(1));
         match result {
             DecodeResult::Corrupt(reason) => assert!(reason.contains("checksum mismatch")),
@@ -314,10 +338,10 @@ mod tests {
         let payload_data = vec!["test_data".to_string()];
         let msgpack_payload = rmp_serde::to_vec(&payload_data).unwrap();
         let mut enveloped = wrap_envelope(&msgpack_payload, 1);
-        
+
         // Truncate to simulate partial write
-        enveloped.truncate(10); 
-        
+        enveloped.truncate(10);
+
         let result = decode_envelope::<Vec<String>>(&enveloped, Some(1));
         match result {
             DecodeResult::Corrupt(reason) => assert!(reason.contains("envelope truncated")),
@@ -329,12 +353,14 @@ mod tests {
     fn test_count_mismatch_detection() {
         let payload_data = vec!["test_data".to_string()];
         let msgpack_payload = rmp_serde::to_vec(&payload_data).unwrap();
-        
+
         let enveloped = wrap_envelope(&msgpack_payload, 1);
         let result = decode_envelope::<Vec<String>>(&enveloped, Some(5));
-        
+
         match result {
-            DecodeResult::Corrupt(reason) => assert!(reason.contains("count 1 != caller expected 5")),
+            DecodeResult::Corrupt(reason) => {
+                assert!(reason.contains("count 1 != caller expected 5"))
+            }
             _ => panic!("Expected Corrupt result due to count mismatch"),
         }
     }

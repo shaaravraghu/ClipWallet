@@ -14,7 +14,7 @@ pub enum ClipMode {
 impl std::fmt::Display for ClipMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ClipMode::Static  => write!(f, "static"),
+            ClipMode::Static => write!(f, "static"),
             ClipMode::Dynamic => write!(f, "dynamic"),
         }
     }
@@ -56,7 +56,7 @@ pub fn load() -> Config {
         cfg
     } else {
         match fs::read_to_string(&path) {
-            Ok(s)  => toml::from_str(&s).unwrap_or_else(|_| Config::default()),
+            Ok(s) => toml::from_str(&s).unwrap_or_else(|_| Config::default()),
             Err(_) => Config::default(),
         }
     };

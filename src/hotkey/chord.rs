@@ -28,7 +28,7 @@ pub enum HotkeyAction {
 }
 
 pub struct ChordDetector {
-    held:         HashSet<Key>,
+    held: HashSet<Key>,
     tab_consumed: bool,
 
     /// The digit pressed while Cmd+Opt was active.
@@ -45,9 +45,9 @@ pub struct ChordDetector {
 impl ChordDetector {
     pub fn new() -> Self {
         Self {
-            held:                  HashSet::new(),
-            tab_consumed:          false,
-            last_digit:            None,
+            held: HashSet::new(),
+            tab_consumed: false,
+            last_digit: None,
             keys_pressed_in_chord: HashSet::new(),
         }
     }
@@ -72,9 +72,7 @@ impl ChordDetector {
         // Chord broken when Cmd or Opt released — retain any keys still held
         // so they can trigger timing-safely on release.  Also retain last_digit
         // while pending chord keys exist: static mode needs it in evaluate_release().
-        if key == Key::MetaLeft || key == Key::MetaRight
-            || key == Key::Alt   || key == Key::AltGr
-        {
+        if key == Key::MetaLeft || key == Key::MetaRight || key == Key::Alt || key == Key::AltGr {
             self.keys_pressed_in_chord.retain(|k| self.held.contains(k));
             // Only clear last_digit when no pending chord keys remain.
             // If keys are still pending, evaluate_release() needs it for
@@ -90,34 +88,29 @@ impl ChordDetector {
     // ── Modifier state ────────────────────────────────────────────────
 
     pub fn cmd(&self) -> bool {
-        self.held.contains(&Key::MetaLeft)
-            || self.held.contains(&Key::MetaRight)
+        self.held.contains(&Key::MetaLeft) || self.held.contains(&Key::MetaRight)
     }
 
     pub fn opt(&self) -> bool {
-        self.held.contains(&Key::Alt)
-            || self.held.contains(&Key::AltGr)
+        self.held.contains(&Key::Alt) || self.held.contains(&Key::AltGr)
     }
 
     fn shift(&self) -> bool {
-        self.held.contains(&Key::ShiftLeft)
-            || self.held.contains(&Key::ShiftRight)
+        self.held.contains(&Key::ShiftLeft) || self.held.contains(&Key::ShiftRight)
     }
 
     // ── Press-triggered: Tab / Esc ────────────────────────────────────
 
-    pub fn evaluate_press(
-        &mut self,
-        key: &Key,
-        mode_static: bool,
-    ) -> Option<HotkeyAction> {
+    pub fn evaluate_press(&mut self, key: &Key, mode_static: bool) -> Option<HotkeyAction> {
         if !self.cmd() || !self.opt() {
             return None;
         }
 
         match key {
             Key::Tab => {
-                if self.tab_consumed { return None; }
+                if self.tab_consumed {
+                    return None;
+                }
                 self.tab_consumed = true;
 
                 if self.held.contains(&Key::Escape) {
@@ -143,13 +136,11 @@ impl ChordDetector {
                 }
             }
 
-            Key::Escape if self.held.contains(&Key::Tab) => {
-                Some(if mode_static {
-                    HotkeyAction::StaticDeleteCurrent
-                } else {
-                    HotkeyAction::DynamicDeleteCurrent
-                })
-            }
+            Key::Escape if self.held.contains(&Key::Tab) => Some(if mode_static {
+                HotkeyAction::StaticDeleteCurrent
+            } else {
+                HotkeyAction::DynamicDeleteCurrent
+            }),
 
             _ => None,
         }
@@ -161,11 +152,7 @@ impl ChordDetector {
     // this handles the common case where a modifier is released
     // a few ms before the letter key.
 
-    pub fn evaluate_release(
-        &mut self,
-        key: &Key,
-        mode_static: bool,
-    ) -> Option<HotkeyAction> {
+    pub fn evaluate_release(&mut self, key: &Key, mode_static: bool) -> Option<HotkeyAction> {
         // The key must have been pressed inside the chord
         if !self.keys_pressed_in_chord.contains(key) {
             return None;
@@ -261,9 +248,15 @@ pub(crate) fn tier_active(cmd_held: bool, opt_held: bool) -> bool {
 
 fn key_to_digit(key: &Key) -> Option<usize> {
     match key {
-        Key::Num1 => Some(1), Key::Num2 => Some(2), Key::Num3 => Some(3),
-        Key::Num4 => Some(4), Key::Num5 => Some(5), Key::Num6 => Some(6),
-        Key::Num7 => Some(7), Key::Num8 => Some(8), Key::Num9 => Some(9),
+        Key::Num1 => Some(1),
+        Key::Num2 => Some(2),
+        Key::Num3 => Some(3),
+        Key::Num4 => Some(4),
+        Key::Num5 => Some(5),
+        Key::Num6 => Some(6),
+        Key::Num7 => Some(7),
+        Key::Num8 => Some(8),
+        Key::Num9 => Some(9),
         _ => None,
     }
 }
