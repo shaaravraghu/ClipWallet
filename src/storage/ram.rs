@@ -1,5 +1,6 @@
 use crate::clipboard::types::{ClipEntry, EntryId};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 
@@ -22,13 +23,10 @@ pub const CURSOR_TIMEOUT_SECS: u64 = 10;
 /// durability mechanism (e.g., a write-ahead log on every mutation).
 pub const FLUSH_INTERVAL_SECS: u64 = 15;
 
-static mut ID_COUNTER: EntryId = 0;
+static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn next_id() -> EntryId {
-    unsafe {
-        ID_COUNTER += 1;
-        ID_COUNTER
-    }
+    ID_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 pub struct RamStore {
