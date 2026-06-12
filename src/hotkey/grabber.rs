@@ -328,7 +328,24 @@ fn handle_event(
             let keycode = event
                 .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
                 as u16;
-            let key = match keycode_to_rdev(keycode) {
+            let key_opt = keycode_to_rdev(keycode);
+
+            // If the full chord is active, suppress ALL keypresses — including
+            // unmapped keys that would otherwise escape carrying Cmd+Opt flags.
+            if detector.cmd() && detector.opt() {
+                if let Some(key) = key_opt {
+                    detector.key_down(key.clone());
+                    debug!("KeyDown {:?}  cmd=true opt=true", key);
+                    if let Some(action) = detector.evaluate_press(&key, mode_static) {
+                        debug!("Action (press): {:?}", action);
+                        let _ = tx.send(action);
+                    }
+                }
+                return None;
+            }
+
+            // Single-modifier case: skip keys we do not recognize.
+            let key = match key_opt {
                 Some(k) => k,
                 None    => return Some(event.to_owned()),
             };
@@ -336,15 +353,6 @@ fn handle_event(
             // Update detector held set FIRST so digit actions see C/X/V.
             detector.key_down(key.clone());
             debug!("KeyDown {:?}  cmd={} opt={}", key, detector.cmd(), detector.opt());
-
-            if detector.cmd() && detector.opt() {
-                if let Some(action) = detector.evaluate_press(&key, mode_static) {
-                    debug!("Action (press): {:?}", action);
-                    let _ = tx.send(action);
-                }
-                return None; // suppress user chord keydown
-            }
-
             Some(event.to_owned())
         }
 
@@ -353,27 +361,24 @@ fn handle_event(
             let keycode = event
                 .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
                 as u16;
-            let key = match keycode_to_rdev(keycode) {
-                Some(k) => k,
-                None    => return Some(event.to_owned()),
-            };
+            let key_opt = keycode_to_rdev(keycode);
 
             let mut detector = state.detector.borrow_mut();
 
             if !state.active.load(Ordering::Relaxed) {
-                // Tier-1 (Idle). Almost always a no-op — but a chord letter
-                // whose trailing KeyUp lands AFTER both modifiers were released
-                // is still pending and must fire, so the modifier-first-release
-                // behavior survives an Active→Idle transition.
-                if detector.is_pending_chord_key(&key) {
-                    if let Some(action) = detector.evaluate_release(&key, mode_static) {
-                        debug!("Action (release, idle-trailing): {:?}", action);
-                        let _ = tx.send(action);
-                        detector.key_up(key);
-                        return None;
+                // Tier-1 (Idle). A chord letter whose trailing KeyUp lands AFTER
+                // both modifiers were released is still pending and must fire.
+                if let Some(key) = key_opt {
+                    if detector.is_pending_chord_key(&key) {
+                        if let Some(action) = detector.evaluate_release(&key, mode_static) {
+                            debug!("Action (release, idle-trailing): {:?}", action);
+                            let _ = tx.send(action);
+                            detector.key_up(key);
+                            return None;
+                        }
                     }
+                    detector.key_up(key);
                 }
-                detector.key_up(key);
                 return Some(event.to_owned());
             }
 
@@ -381,19 +386,25 @@ fn handle_event(
             // Use the detector's OWN modifier state, not live flags: live flags
             // can already show Opt=false by the time the letter's KeyUp fires.
             let was_active = detector.cmd() && detector.opt();
-            let is_pending = detector.is_pending_chord_key(&key);
-            debug!("KeyUp {:?}  detector_active={}  pending={}", key, was_active, is_pending);
 
-            if was_active || is_pending {
-                if let Some(action) = detector.evaluate_release(&key, mode_static) {
-                    debug!("Action (release): {:?}", action);
-                    let _ = tx.send(action);
-                    detector.key_up(key);
-                    return None; // suppress user chord keyup
+            if let Some(key) = key_opt {
+                let is_pending = detector.is_pending_chord_key(&key);
+                debug!("KeyUp {:?}  detector_active={}  pending={}", key, was_active, is_pending);
+
+                if was_active || is_pending {
+                    if let Some(action) = detector.evaluate_release(&key, mode_static) {
+                        debug!("Action (release): {:?}", action);
+                        let _ = tx.send(action);
+                        detector.key_up(key);
+                        return None;
+                    }
                 }
+                detector.key_up(key);
+            } else {
+                // Unmapped key: suppress its KeyUp while the chord is active so
+                // modifier flags do not bleed into the system on release.
+                debug!("KeyUp unmapped({})  detector_active={}", keycode, was_active);
             }
-
-            detector.key_up(key);
 
             // Suppress the raw event only if the chord was active.
             if was_active { return None; }
