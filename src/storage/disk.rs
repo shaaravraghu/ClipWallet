@@ -176,6 +176,13 @@ pub fn flush_force(ram: &mut RamStore) -> anyhow::Result<()> {
     atomic_write(&ring_path, &bytes)?;
 
     ram.clear_dirty();
+
+    // Reclaim blob files orphaned since the last flush (ring evictions, slot
+    // overwrites, deletions, vault encryption). A mutation always sets the dirty
+    // flag, so every orphan is collected within one flush interval. See
+    // storage::spill for the lifecycle rationale.
+    crate::storage::spill::gc_orphans(ram);
+
     info!(
         "Flushed to disk — {} static slots, {} dynamic entries",
         ram.static_slots.iter().filter(|s| s.is_some()).count(),

@@ -1,5 +1,6 @@
 use crate::storage::disk::store_dir;
 use crate::storage::encrypted::vault_dir;
+use crate::storage::spill::blob_dir;
 use dirs::home_dir;
 use std::fs;
 use std::process::Command;
@@ -46,6 +47,29 @@ pub fn print_full_status() {
 
     println!("  Static    : {}/9 slots occupied", static_count);
     println!("  Ring      : {} on disk", ring_size);
+
+    // ── Spilled blob stats ────────────────────────────────────────────
+    let blobs = blob_dir();
+    let (blob_count, blob_bytes) = if blobs.exists() {
+        fs::read_dir(&blobs)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("blob"))
+                    .fold((0usize, 0u64), |(n, sz), e| {
+                        let len = e.metadata().map(|m| m.len()).unwrap_or(0);
+                        (n + 1, sz + len)
+                    })
+            })
+            .unwrap_or((0, 0))
+    } else {
+        (0, 0)
+    };
+    println!(
+        "  Blobs     : {} large entr{} on disk ({} bytes)",
+        blob_count,
+        if blob_count == 1 { "y" } else { "ies" },
+        blob_bytes
+    );
 
     // ── Vault stats ───────────────────────────────────────────────────
     let vault = vault_dir();

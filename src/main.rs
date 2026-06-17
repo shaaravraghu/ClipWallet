@@ -10,7 +10,7 @@ use crate::config::{set_mode, ClipMode};
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::hotkey::HotkeyAction;
-use crate::storage::{disk, ram::FLUSH_INTERVAL_SECS, RamStore};
+use crate::storage::{disk, ram::FLUSH_INTERVAL_SECS, spill, RamStore};
 use clap::{Parser, Subcommand};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
@@ -309,6 +309,14 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
         if mode_static { "STATIC" } else { "DYNAMIC" },
         capacity
     );
+    if cfg.spill_threshold_bytes == 0 {
+        info!("Large-entry spill: disabled (all entries kept resident)");
+    } else {
+        info!(
+            "Large-entry spill: payloads ≥ {} bytes stored on disk until pasted",
+            cfg.spill_threshold_bytes
+        );
+    }
 
     // ── Encryption + memory ON by default ────────────────────────────────────
     // The vault key is created automatically if it doesn't exist.
@@ -324,9 +332,14 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
     {
         let mut w = ram.write().unwrap();
         disk::cleanup_tmp_files();
+        spill::cleanup_tmp_files();
         if let Err(e) = disk::load(&mut w) {
             error!("Disk load failed: {}", e);
         }
+        // Reclaim blob files orphaned by a previous hard crash that bypassed the
+        // graceful shutdown flush (issue #28). Only blobs unreferenced by a
+        // loaded entry are removed.
+        spill::gc_orphans(&w);
     }
     info!("Disk state loaded into RAM ✓");
 
@@ -349,7 +362,7 @@ async fn run_service(ring_capacity_override: Option<usize>) -> anyhow::Result<()
 
     // ── Task 2: Engine event loop ─────────────────────────────────────────────
     let ram_engine = Arc::clone(&ram);
-    let mut engine = Engine::new(ram_engine)?;
+    let mut engine = Engine::new(ram_engine, cfg.spill_threshold_bytes)?;
     let engine_handle = tokio::spawn(async move {
         while let Some(action) = rx.recv().await {
             engine.handle(action);

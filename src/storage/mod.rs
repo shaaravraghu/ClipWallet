@@ -1,6 +1,7 @@
 pub mod disk;
 pub mod encrypted;
 pub mod ram;
+pub mod spill;
 
 pub use ram::RamStore;
 #[allow(unused_imports)]
