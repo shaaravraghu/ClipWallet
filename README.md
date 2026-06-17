@@ -707,10 +707,32 @@ ClipWallet stores data in your home directory under `~/.clipwallet/`:
 
 | Path | Contents | Format |
 |------|----------|--------|
-| `~/.clipwallet/config.toml` | Mode configuration (Static/Dynamic) | TOML |
+| `~/.clipwallet/config.toml` | Mode + ring capacity + spill threshold | TOML |
 | `~/.clipwallet/store/` | Clipboard persistence (unencrypted) | MessagePack |
+| `~/.clipwallet/blobs/` | Spilled large-entry payloads (issue #28) | Raw bytes |
 | `~/.clipwallet/vault/` | Encrypted clipboard entries | AES-256-GCM |
 | `~/.clipwallet/logs/` | Daemon stdout/stderr logs | Plain text |
+
+### Large Entries (Memory Spill)
+
+Large clipboard payloads — images and binary blobs — are not kept fully
+resident in RAM. When a captured entry's payload is at least
+`spill_threshold_bytes` (default **1 MiB**), its bytes are written to a blob
+file under `~/.clipwallet/blobs/` and the active ring or slot holds only a small
+pointer to it. The full bytes are loaded back into memory only at the moment you
+paste the entry, and released again immediately afterwards — so copying a 50 MB
+image and scrolling past it no longer costs 50 MB of resident memory.
+
+Tune or disable it in `~/.clipwallet/config.toml`:
+
+```toml
+# Spill entries this size (bytes) or larger to disk. 0 disables spilling.
+spill_threshold_bytes = 1048576
+```
+
+Blob files are reference-counted: any blob no longer pointed to by a live entry
+(after eviction, deletion, or a crash) is reclaimed automatically on the next
+flush and at startup.
 
 ### Encryption Details
 

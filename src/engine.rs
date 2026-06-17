@@ -7,6 +7,7 @@ use crate::hotkey::{
 use crate::notify;
 use crate::storage::encrypted::{load_from_vault, save_to_vault};
 use crate::storage::ram::{next_id, RamStore};
+use crate::storage::spill;
 use arboard::{Clipboard, ImageData};
 use std::borrow::Cow;
 use std::sync::{Arc, RwLock};
@@ -17,13 +18,17 @@ const PASTE_SETTLE_MS: u64 = 60;
 pub struct Engine {
     ram:       Arc<RwLock<RamStore>>,
     clipboard: Clipboard,
+    /// Payload size (bytes) at or above which entries are spilled to disk and
+    /// kept in RAM only as a pointer until pasted. `0` disables spilling.
+    spill_threshold: usize,
 }
 
 impl Engine {
-    pub fn new(ram: Arc<RwLock<RamStore>>) -> anyhow::Result<Self> {
+    pub fn new(ram: Arc<RwLock<RamStore>>, spill_threshold: usize) -> anyhow::Result<Self> {
         Ok(Self {
             ram,
             clipboard:    Clipboard::new()?,
+            spill_threshold,
         })
     }
 
@@ -120,6 +125,17 @@ impl Engine {
                     _ => { warn!("Binary cannot be synced"); false }
                 }
             }
+            // A spilled entry is loaded from disk only here, at the moment it is
+            // actually being placed on the system pasteboard (i.e. a paste). The
+            // reconstructed bytes live only for this call: once the pasteboard has
+            // copied them, `full` drops and the RAM is released. Navigation never
+            // reaches this arm — see the `is_spilled` guards in the *_nav handlers.
+            ClipData::Spilled { .. } => {
+                match spill::hydrate(data) {
+                    Ok(full) => self.sync_to_system_clipboard(&full),
+                    Err(e)   => { warn!("[Hydrate] {}", e); false }
+                }
+            }
         }
     }
 
@@ -142,6 +158,12 @@ impl Engine {
             ClipData::FilePath(p) => format!("{} file(s)", p.len()),
             ClipData::RichText(b) => format!("RTF {} bytes", b.len()),
             ClipData::Binary(b)   => format!("Binary {} bytes", b.len()),
+            ClipData::Spilled { kind, size, .. } => match kind {
+                crate::clipboard::types::SpilledKind::Image { width, height } => {
+                    format!("Image {}×{} (on disk)", width, height)
+                }
+                _ => format!("{} {} bytes (on disk)", kind.type_label(), size),
+            },
         }
     }
 
@@ -158,6 +180,12 @@ impl Engine {
             ClipData::FilePath(p)  => format!("[{} file(s)]", p.len()),
             ClipData::RichText(b)  => format!("[RTF {} bytes]", b.len()),
             ClipData::Binary(b)    => format!("[Binary {} bytes]", b.len()),
+            ClipData::Spilled { kind, size, .. } => match kind {
+                crate::clipboard::types::SpilledKind::Image { width, height } => {
+                    format!("[Image {}x{} ⇣disk]", width, height)
+                }
+                _ => format!("[{} {} bytes ⇣disk]", kind.type_label(), size),
+            },
         }
     }
 
@@ -200,6 +228,7 @@ impl Engine {
         if let Some(data) = self.read_clipboard() {
             let preview = Self::short_preview(&data);
             let entry   = ClipEntry::new(next_id(), data);
+            let entry   = spill::maybe_spill(entry, self.spill_threshold);
             info!("[Static][COPY] slot={} ← id={} type={}", slot, entry.id, entry.data.type_label());
             self.ram.write().unwrap().set_static(slot, entry);
             self.log_static_state();
@@ -213,6 +242,7 @@ impl Engine {
         if let Some(data) = self.read_clipboard() {
             let preview = Self::short_preview(&data);
             let entry   = ClipEntry::new(next_id(), data);
+            let entry   = spill::maybe_spill(entry, self.spill_threshold);
             info!("[Static][CUT] slot={} ← id={} type={}", slot, entry.id, entry.data.type_label());
             self.ram.write().unwrap().set_static(slot, entry);
             self.log_static_state();
@@ -237,6 +267,13 @@ impl Engine {
 
     fn static_plain_paste(&mut self, slot: usize) {
         let data = self.ram.read().unwrap().get_static(slot).map(|e| e.data.clone());
+        let data = match data {
+            Some(d) => match spill::hydrate(&d) {
+                Ok(h)  => Some(h.into_owned()),
+                Err(e) => { warn!("[Static][PLAIN PASTE] hydrate failed for slot={}: {}", slot, e); notify::notify_slot_empty(slot); return; }
+            },
+            None => None,
+        };
         match data {
             Some(ClipData::RichText(ref bytes)) => {
                 info!("[Static][PLAIN PASTE] slot={} — stripping RTF", slot);
@@ -277,7 +314,13 @@ impl Engine {
                 if let Some((id, type_label, d)) = data {
                     let preview = Self::short_preview(&d);
                     info!("[Static][NAV] → slot {} id={} type={}", slot, id, type_label);
-                    self.sync_to_system_clipboard(&d);
+                    // Navigating *past* a large entry must not load it (issue #28):
+                    // a spilled entry is materialised onto the system pasteboard
+                    // only by an explicit paste. Small/resident entries still sync
+                    // so the native Cmd+V mirrors the cursor as before.
+                    if !d.is_spilled() {
+                        self.sync_to_system_clipboard(&d);
+                    }
                     self.log_static_state();
                     notify::notify_static_nav(slot, &preview);
                 }
@@ -312,12 +355,17 @@ impl Engine {
         simulate_copy();
         if let Some(data) = self.read_clipboard() {
             let preview = Self::short_preview(&data);
-            let entry   = ClipEntry::new(next_id(), data);
-            info!("[Dynamic][COPY] id={} type={} size={}B → ring[0]",
-                entry.id, entry.data.type_label(), entry.data.size_bytes());
-            let evicted = self.ram.write().unwrap().push_dynamic(entry.clone());
+            // Sync from the in-hand bytes *before* spilling so the system
+            // pasteboard reflects the (possibly normalised) capture without ever
+            // hydrating from disk.
+            self.sync_to_system_clipboard(&data);
+            let entry = ClipEntry::new(next_id(), data);
+            let entry = spill::maybe_spill(entry, self.spill_threshold);
+            let (id, type_label, size) =
+                (entry.id, entry.data.type_label(), entry.data.size_bytes());
+            info!("[Dynamic][COPY] id={} type={} size={}B → ring[0]", id, type_label, size);
+            let evicted = self.ram.write().unwrap().push_dynamic(entry);
             if let Some(old) = evicted { info!("[Dynamic][EVICT] Dropped: {}", old); }
-            self.sync_to_system_clipboard(&entry.data);
             let (pos, total) = {
                 let ram = self.ram.read().unwrap();
                 (ram.dynamic_cursor + 1, ram.ring_len())
@@ -332,10 +380,12 @@ impl Engine {
         simulate_cut();
         if let Some(data) = self.read_clipboard() {
             let preview = Self::short_preview(&data);
-            let entry   = ClipEntry::new(next_id(), data);
-            info!("[Dynamic][CUT] id={} type={} → ring[0]", entry.id, entry.data.type_label());
-            self.ram.write().unwrap().push_dynamic(entry.clone());
-            self.sync_to_system_clipboard(&entry.data);
+            self.sync_to_system_clipboard(&data);
+            let entry = ClipEntry::new(next_id(), data);
+            let entry = spill::maybe_spill(entry, self.spill_threshold);
+            let (id, type_label) = (entry.id, entry.data.type_label());
+            info!("[Dynamic][CUT] id={} type={} → ring[0]", id, type_label);
+            self.ram.write().unwrap().push_dynamic(entry);
             let (pos, total) = {
                 let ram = self.ram.read().unwrap();
                 (ram.dynamic_cursor + 1, ram.ring_len())
@@ -367,6 +417,13 @@ impl Engine {
         let data = {
             let ram = self.ram.read().unwrap();
             ram.current_dynamic().map(|e| (e.id, e.data.clone(), ram.dynamic_cursor, ram.ring_len()))
+        };
+        let data = match data {
+            Some((id, d, cursor, total)) => match spill::hydrate(&d) {
+                Ok(h)  => Some((id, h.into_owned(), cursor, total)),
+                Err(e) => { warn!("[Dynamic][PLAIN PASTE] hydrate failed: {}", e); notify::notify_ring_empty(); return; }
+            },
+            None => None,
         };
         match data {
             Some((id, ClipData::RichText(ref bytes), cursor, total)) => {
@@ -410,7 +467,11 @@ impl Engine {
             Some((id, type_label, cursor, total, d)) => {
                 let preview = Self::short_preview(&d);
                 info!("[Dynamic][NAV] [{}/{}] id={} type={}", cursor+1, total, id, type_label);
-                self.sync_to_system_clipboard(&d);
+                // Don't load a spilled entry just to scroll past it (issue #28);
+                // it reaches the pasteboard only on an explicit paste.
+                if !d.is_spilled() {
+                    self.sync_to_system_clipboard(&d);
+                }
                 self.log_ring_state();
                 notify::notify_dynamic_nav(cursor + 1, total, &preview);
             }
@@ -433,7 +494,9 @@ impl Engine {
         self.ram.write().unwrap().delete_at_cursor();
         info!("[Dynamic][DELETE] Removed ring[{}] id={:?}", cursor, id);
         let next = self.ram.read().unwrap().current_dynamic().map(|e| e.data.clone());
-        if let Some(d) = next { self.sync_to_system_clipboard(&d); }
+        if let Some(d) = next {
+            if !d.is_spilled() { self.sync_to_system_clipboard(&d); }
+        }
         self.log_ring_state();
         notify::notify_dynamic_delete(cursor);
     }
@@ -444,7 +507,9 @@ impl Engine {
             self.ram.write().unwrap().reset_cursor();
             info!("[Dynamic][TIMEOUT] Cursor reset [{}]→[0]", was_at + 1);
             let d = self.ram.read().unwrap().current_dynamic().map(|e| e.data.clone());
-            if let Some(data) = d { self.sync_to_system_clipboard(&data); }
+            if let Some(data) = d {
+                if !data.is_spilled() { self.sync_to_system_clipboard(&data); }
+            }
             self.log_ring_state();
         }
     }
@@ -455,6 +520,13 @@ impl Engine {
         let entry = self.ram.read().unwrap().get_static(slot).cloned();
         match entry {
             Some(mut e) => {
+                // Materialise any spilled bytes so the vault stores real content
+                // rather than a pointer. The blob is left orphaned and reclaimed
+                // by the next GC, since the content now lives in the vault.
+                match spill::hydrate(&e.data) {
+                    Ok(full) => e.data = full.into_owned(),
+                    Err(err) => { warn!("[Vault] Encrypt failed (hydrate): {}", err); return; }
+                }
                 e.encrypted = true;
                 match save_to_vault(&e) {
                     Ok(path) => {
@@ -472,6 +544,9 @@ impl Engine {
         match load_from_vault(id) {
             Ok(mut entry) => {
                 entry.encrypted = false;
+                // Re-spill on the way back into RAM so a large decrypted entry
+                // doesn't undo the memory savings.
+                let entry = spill::maybe_spill(entry, self.spill_threshold);
                 info!("[Vault] Decrypted id={} → slot {}", id, slot);
                 self.ram.write().unwrap().set_static(slot, entry);
             }
